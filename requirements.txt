@@ -1,0 +1,5 @@
+websockets
+python-dotenv
+requests
+scipy
+pandas
