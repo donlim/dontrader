@@ -1,9 +1,13 @@
+# trading_bot/tasks/asset_manager.py
+
 import asyncio
 from trading_bot.api.websocket import handle_websocket, orderbooks
 from trading_bot.config.config import SYMBOLS
 from trading_bot.state.buffers import get_buffer
-from trading_bot.config import parameters
-from trading_bot.logic import indicators, strategy
+from trading_bot.config import parameters, strategy_loader
+from trading_bot.logic import indicators, timeframes, strategy
+
+positions = {symbol: None for symbol in SYMBOLS}
 
 for symbol in SYMBOLS:
     for window in parameters.EMA_WINDOWS:
@@ -29,22 +33,33 @@ async def debug_loop():
                 bb = indicators.compute_bollinger(prices, parameters.BOLLINGER_WINDOW, parameters.BOLLINGER_K)
                 atr = indicators.compute_atr(prices, parameters.ATR_WINDOW)
 
-                # ✅ NEW 3.2 indicators:
-                stddev = indicators.compute_stddev(prices, parameters.STDDEV_WINDOW)
-                skew_ = indicators.compute_skew(prices, parameters.SKEW_WINDOW)
-                kurt_ = indicators.compute_kurtosis(prices, parameters.KURTOSIS_WINDOW)
-
                 indicator_pack = {
                     'PRICE': price, 'EMA10': ema.get("EMA10"), 'EMA50': ema.get("EMA50"),
-                    'MACD': macd, 'RSI': rsi, 'MOMENTUM': mom, 'BOLLINGER': bb, 'ATR': atr,
-                    'STDDEV': stddev, 'SKEW': skew_, 'KURTOSIS': kurt_
+                    'MACD': macd, 'RSI': rsi, 'MOMENTUM': mom, 'BOLLINGER': bb, 'ATR': atr
                 }
-
                 orderbook_pack = { 'imbalance': orderbooks[symbol].get_imbalance() }
+                score = strategy.calculate_score(symbol, indicator_pack, orderbook_pack)
 
-                score = strategy.calculate_score(indicator_pack, orderbook_pack)
+                params = strategy_loader.get_profile(symbol)
+                threshold = params["MASTER_THRESHOLD"]
 
-                print(f"[{symbol}] Price: {price} | Score: {score:.4f}")
+                if positions[symbol] is None:
+                    if score > threshold:
+                        print(f"[{symbol}] ENTER LONG at {price:.2f} (Score: {score:.2f} > Threshold {threshold})")
+                        positions[symbol] = ("LONG", price)
+                    elif score < -threshold:
+                        print(f"[{symbol}] ENTER SHORT at {price:.2f} (Score: {score:.2f} < Threshold -{threshold})")
+                        positions[symbol] = ("SHORT", price)
+                    else:
+                        print(f"[{symbol}] HOLD — No entry (Score: {score:.2f} inside neutral zone ±{threshold})")
+                else:
+                    side, entry_price = positions[symbol]
+                    pnl = (price - entry_price) if side == "LONG" else (entry_price - price)
+                    if (side == "LONG" and score < 0) or (side == "SHORT" and score > 0):
+                        print(f"[{symbol}] EXIT {side} at {price:.2f} | PNL: {pnl:.2f} (Score reverted)")
+                        positions[symbol] = None
+                    else:
+                        print(f"[{symbol}] {side} | Price: {price:.2f} | PNL: {pnl:.2f} | Holding (Score: {score:.2f})")
 
 async def launch_all():
     await asyncio.gather(
