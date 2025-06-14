@@ -1,6 +1,7 @@
 # trading_bot/logic/indicators.py
 
 import math
+import numpy as np
 from collections import defaultdict
 from scipy.stats import skew, kurtosis
 
@@ -215,3 +216,74 @@ def compute_top_volatility(bids, asks):
     bid_vol = max(best_bid_prices) - min(best_bid_prices) if len(best_bid_prices) >= 2 else 0
     ask_vol = max(best_ask_prices) - min(best_ask_prices) if len(best_ask_prices) >= 2 else 0
     return bid_vol, ask_vol
+
+
+def compute_rolling_vwap(prices, volumes, window):
+    if not prices or not volumes or len(prices) != len(volumes):
+        return None
+
+    if len(prices) < window:
+        return None
+
+    price_window = prices[-window:]
+    volume_window = volumes[-window:]
+
+    total_pv = sum(p * v for p, v in zip(price_window, volume_window))
+    total_vol = sum(volume_window)
+
+    if total_vol == 0:
+        return None
+
+    return total_pv / total_vol
+
+def compute_anchored_vwap(prices, volumes, anchor_index=0):
+    """
+    VWAP starting from anchor_index up to the latest price.
+    anchor_index = 0 means full period.
+    """
+    if not prices or not volumes or len(prices) != len(volumes):
+        return None
+
+    if anchor_index >= len(prices):
+        return None
+
+    price_window = prices[anchor_index:]
+    volume_window = volumes[anchor_index:]
+
+    total_pv = sum(p * v for p, v in zip(price_window, volume_window))
+    total_vol = sum(volume_window)
+
+    if total_vol == 0:
+        return None
+
+    return total_pv / total_vol
+
+def compute_book_pressure_ratio(bids, asks, depth=5):
+    """
+    Ratio of bid liquidity vs ask liquidity near top of book.
+    """
+    total_bid = sum(sz for px, sz in bids[:depth])
+    total_ask = sum(sz for px, sz in asks[:depth])
+    
+    if total_ask == 0:
+        return float('inf')
+    return total_bid / total_ask
+
+import numpy as np
+
+def compute_book_slope(bids, asks, depth=5):
+    """
+    Estimate order book steepness using linear regression on price vs size.
+    """
+    if len(bids) < depth or len(asks) < depth:
+        return None, None
+
+    bid_px = np.array([px for px, sz in bids[:depth]])
+    bid_sz = np.array([sz for px, sz in bids[:depth]])
+    ask_px = np.array([px for px, sz in asks[:depth]])
+    ask_sz = np.array([sz for px, sz in asks[:depth]])
+
+    bid_slope = np.polyfit(bid_px, bid_sz, 1)[0]
+    ask_slope = np.polyfit(ask_px, ask_sz, 1)[0]
+
+    return bid_slope, ask_slope
