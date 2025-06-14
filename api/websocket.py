@@ -1,49 +1,61 @@
-import asyncio, websockets, json, hmac, hashlib, time
-from trading_bot.config.config import HL_API_KEY, HL_API_SECRET, SYMBOLS
-from trading_bot.state.buffers import update_buffer
-from trading_bot.logic.orderbook import OrderbookTracker
+# trading_bot/api/websocket.py
 
-orderbooks = {symbol: OrderbookTracker() for symbol in SYMBOLS}
+import asyncio
+import websockets
+import json
+from trading_bot.config.config import SYMBOLS, WS_URL
+from trading_bot.state.buffers import update_buffer, orderbooks
 
-async def authenticate(ws):
-    timestamp = str(int(time.time() * 1000))
-    signature = hmac.new(HL_API_SECRET.encode(), timestamp.encode(), hashlib.sha256).hexdigest()
-    await ws.send(json.dumps({"method": "auth", "apiKey": HL_API_KEY, "timestamp": timestamp, "signature": signature}))
-    print("Authenticated with Hyperliquid WebSocket ✅")
+async def subscribe(ws, symbol):
+    # BookTop subscription (best bid/ask)
+    await ws.send(json.dumps({
+        "method": "subscribe",
+        "subscription": {
+            "type": "bookTop",
+            "coin": symbol
+        }
+    }))
+    # Trades subscription (for volume)
+    await ws.send(json.dumps({
+        "method": "subscribe",
+        "subscription": {
+            "type": "trades",
+            "coin": symbol
+        }
+    }))
 
-async def send_pings(ws):
-    while True:
-        await asyncio.sleep(30)
-        await ws.send(json.dumps({"method": "ping"}))
+async def stream_symbol(symbol):
+    async with websockets.connect(WS_URL) as ws:
+        await subscribe(ws, symbol)
+        print(f"Authenticated websocket for: {symbol}")
+
+        while True:
+            message = await ws.recv()
+            data = json.loads(message)
+
+            if data["channel"] == "bookTop":
+                coin = data["data"]["coin"]
+                best_bid = float(data["data"]["levels"][0][0])
+                best_ask = float(data["data"]["levels"][1][0])
+                mid_price = (best_bid + best_ask) / 2
+
+                bid_size = float(data["data"]["levels"][0][1])
+                ask_size = float(data["data"]["levels"][1][1])
+                imbalance = (bid_size - ask_size) / (bid_size + ask_size + 1e-6)
+
+                orderbooks[coin].update(mid_price, imbalance)
+                update_buffer(coin, mid_price, None)
+
+            elif data["channel"] == "trades":
+                for trade in data["data"]:
+                    coin = trade["coin"]
+                    price = float(trade["px"])
+                    size = float(trade["sz"])
+
+                    update_buffer(coin, price, size)
+
+            else:
+                print(f"Unknown message for {symbol}: {data}")
 
 async def handle_websocket():
-    uri = "wss://api.hyperliquid.xyz/ws"
-    async with websockets.connect(uri) as ws:
-        await authenticate(ws)
-        for symbol in SYMBOLS:
-            await ws.send(json.dumps({"method": "subscribe", "subscription": {"type": "l2Book", "coin": symbol}}))
-            print(f"Subscribed to: {symbol}")
-        asyncio.create_task(send_pings(ws))
-        while True:
-            try:
-                data = json.loads(await ws.recv())
-                if data.get("channel") == "l2Book":
-                    update = data["data"]
-                    symbol = update["coin"]
-
-                    bid = float(update["levels"][0][0]["px"])
-                    bid_size = float(update["levels"][0][0]["sz"])
-                    ask = float(update["levels"][1][0]["px"])
-                    ask_size = float(update["levels"][1][0]["sz"])
-                    mid = (bid + ask) / 2
-                    timestamp = update.get("time", None)
-
-                    update_buffer(symbol, mid, timestamp)
-                    orderbooks[symbol].update(bid, bid_size, ask, ask_size)
-                    
-                    # Live print
-                    print(f"[{symbol}] Mid Price: {mid} | Imbalance: {orderbooks[symbol].get_imbalance():.3f} at {timestamp}")
-
-            except Exception as e:
-                print(f"WebSocket error: {e}")
-                await asyncio.sleep(1)
+    await asyncio.gather(*[stream_symbol(symbol) for symbol in SYMBOLS])

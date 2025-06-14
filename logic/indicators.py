@@ -1,3 +1,5 @@
+# trading_bot/logic/indicators.py
+
 import math
 from collections import defaultdict
 from scipy.stats import skew, kurtosis
@@ -13,7 +15,8 @@ def get_ema(symbol, window):
     state = ema_store[symbol].get(window)
     return state["value"] if state else None
 
-def compute_sma(prices): return sum(prices) / len(prices) if prices else None
+def compute_sma(prices):
+    return sum(prices) / len(prices) if prices else None
 
 def compute_rsi(prices, window):
     if len(prices) < window + 1: return None
@@ -60,3 +63,110 @@ def compute_skew(prices, window):
 def compute_kurtosis(prices, window):
     if len(prices) < window: return None
     return kurtosis(prices[-window:])
+
+def compute_stoch_rsi(prices, rsi_window, stoch_window):
+    if len(prices) < rsi_window + stoch_window:
+        return None
+
+    rsi_values = []
+    for i in range(stoch_window):
+        window_prices = prices[-(rsi_window + i):-(i) if i != 0 else None]
+        rsi = compute_rsi(window_prices, rsi_window)
+        if rsi is not None:
+            rsi_values.append(rsi)
+
+    if not rsi_values or len(rsi_values) < stoch_window:
+        return None
+
+    current_rsi = rsi_values[-1]
+    min_rsi = min(rsi_values)
+    max_rsi = max(rsi_values)
+    if max_rsi - min_rsi == 0:
+        return 0
+
+    stoch_rsi = (current_rsi - min_rsi) / (max_rsi - min_rsi)
+    return stoch_rsi
+
+def compute_obv(prices, volumes):
+    if not prices or not volumes or len(prices) != len(volumes):
+        return None
+
+    obv = 0
+    for i in range(1, len(prices)):
+        if prices[i] > prices[i-1]:
+            obv += volumes[i]
+        elif prices[i] < prices[i-1]:
+            obv -= volumes[i]
+    return obv
+
+def compute_vwap(prices, volumes):
+    if not prices or not volumes or len(prices) != len(volumes):
+        return None
+
+    cumulative_price_volume = sum(p * v for p, v in zip(prices, volumes))
+    cumulative_volume = sum(volumes)
+    if cumulative_volume == 0:
+        return None
+
+    return cumulative_price_volume / cumulative_volume
+
+def compute_acc_dist(prices, highs, lows, closes, volumes):
+    if not (len(prices) == len(highs) == len(lows) == len(closes) == len(volumes)):
+        return None
+
+    adl = 0
+    for h, l, c, v in zip(highs, lows, closes, volumes):
+        if h - l == 0:
+            continue
+        mfm = ((c - l) - (h - c)) / (h - l)
+        adl += mfm * v
+    return adl
+
+def compute_accumulation_distribution(prices, volumes, window):
+    if not prices or not volumes or len(prices) != len(volumes):
+        return None
+
+    if len(prices) < window:
+        return None
+
+    ad = 0
+    for i in range(window-1, len(prices)):
+        high = max(prices[i-window+1:i+1])
+        low = min(prices[i-window+1:i+1])
+        close = prices[i]
+        volume = volumes[i]
+
+        if high == low:
+            mfm = 0
+        else:
+            mfm = ((close - low) - (high - close)) / (high - low)
+        ad += mfm * volume
+
+    return ad
+
+# trading_bot/logic/indicators.py
+
+def detect_support_resistance(prices, window=20, tolerance=0.001):
+    """
+    Identify support and resistance levels in the price series.
+
+    Args:
+        prices: list of recent prices.
+        window: number of periods to look back.
+        tolerance: minimum price difference to treat levels as distinct.
+
+    Returns:
+        (support_level, resistance_level)
+    """
+    if len(prices) < window:
+        return None, None
+
+    recent_prices = prices[-window:]
+    high = max(recent_prices)
+    low = min(recent_prices)
+
+    # Add tolerance logic if you want to avoid very close levels being treated as separate
+    support_level = low * (1 - tolerance)
+    resistance_level = high * (1 + tolerance)
+
+    return support_level, resistance_level
