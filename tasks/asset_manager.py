@@ -1,14 +1,13 @@
-# trading_bot/tasks/asset_manager.py
-
 import asyncio
 from trading_bot.api import websocket
 from trading_bot.config.config import SYMBOLS
-from trading_bot.state.buffers import get_buffer
-from trading_bot.config import parameters, strategy_loader
+from trading_bot.state.buffers import get_buffer, orderbooks
+from trading_bot.config import parameters
 from trading_bot.logic import indicators
 
 positions = {symbol: None for symbol in SYMBOLS}
 
+# Initialize EMA states
 for symbol in SYMBOLS:
     for window in parameters.EMA_WINDOWS:
         indicators.update_ema(symbol, window, None)
@@ -23,6 +22,8 @@ async def debug_loop():
 
             if prices and volumes:
                 price = prices[-1]
+
+                # Update EMA states live
                 for window in parameters.EMA_WINDOWS:
                     indicators.update_ema(symbol, window, price)
 
@@ -41,15 +42,22 @@ async def debug_loop():
                     prices, parameters.SUPPORT_RESISTANCE_WINDOW, parameters.SUPPORT_RESISTANCE_TOLERANCE
                 )
                 stddev = indicators.compute_stddev(prices, parameters.STDDEV_WINDOW)
-                skewness = indicators.compute_skew(prices, parameters.SKEW_WINDOW)
+                skew = indicators.compute_skew(prices, parameters.SKEW_WINDOW)
                 kurt = indicators.compute_kurtosis(prices, parameters.KURTOSIS_WINDOW)
+
+                # ✅ NEW: access full order book depth
+                orderbook = orderbooks[symbol]
+                bids, asks = orderbook.get_depth()
+                full_imbalance = indicators.compute_full_book_imbalance(bids, asks)
+                top_imbalance = indicators.compute_book_imbalance(bids, asks, depth=5)
 
                 indicator_pack = {
                     'PRICE': price, 'EMA10': ema.get("EMA10"), 'EMA50': ema.get("EMA50"),
                     'MACD': macd, 'RSI': rsi, 'STOCH_RSI': stoch_rsi, 'MOMENTUM': mom,
                     'BOLLINGER': bb, 'ATR': atr, 'VWAP': vwap, 'OBV': obv, 'AD': ad,
                     'SUPPORT': support, 'RESISTANCE': resistance,
-                    'STDDEV': stddev, 'SKEW': skewness, 'KURTOSIS': kurt
+                    'STDDEV': stddev, 'SKEW': skew, 'KURTOSIS': kurt,
+                    'FULL_BOOK_IMB': full_imbalance, 'BOOK_IMB': top_imbalance,
                 }
 
                 print(f"[{symbol}] Indicators: {indicator_pack}")

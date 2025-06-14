@@ -170,3 +170,23 @@ def detect_support_resistance(prices, window=20, tolerance=0.001):
     resistance_level = high * (1 + tolerance)
 
     return support_level, resistance_level
+
+def compute_book_imbalance(bids, asks, depth=5):
+    total_bid = sum(sz for px, sz in bids[:depth])
+    total_ask = sum(sz for px, sz in asks[:depth])
+
+    if total_bid + total_ask == 0:
+        return 0
+
+    imbalance = (total_bid - total_ask) / (total_bid + total_ask)
+    return imbalance
+
+def compute_full_book_imbalance(bids, asks):
+    total_bid = sum(sz for px, sz in bids)
+    total_ask = sum(sz for px, sz in asks)
+
+    if total_bid + total_ask == 0:
+        return 0
+
+    imbalance = (total_bid - total_ask) / (total_bid + total_ask)
+    return imbalance

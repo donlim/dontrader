@@ -7,15 +7,15 @@ from trading_bot.config.config import SYMBOLS, WS_URL
 from trading_bot.state.buffers import update_buffer, orderbooks
 
 async def subscribe(ws, symbol):
-    # BookTop subscription (best bid/ask)
+    # Subscribe to full depth l2Book
     await ws.send(json.dumps({
         "method": "subscribe",
         "subscription": {
-            "type": "bookTop",
+            "type": "l2Book",
             "coin": symbol
         }
     }))
-    # Trades subscription (for volume)
+    # Subscribe to trades for volume
     await ws.send(json.dumps({
         "method": "subscribe",
         "subscription": {
@@ -33,17 +33,23 @@ async def stream_symbol(symbol):
             message = await ws.recv()
             data = json.loads(message)
 
-            if data["channel"] == "bookTop":
+            if data["channel"] == "l2Book":
                 coin = data["data"]["coin"]
-                best_bid = float(data["data"]["levels"][0][0])
-                best_ask = float(data["data"]["levels"][1][0])
-                mid_price = (best_bid + best_ask) / 2
+                bids_raw, asks_raw = data["data"]["levels"]
 
-                bid_size = float(data["data"]["levels"][0][1])
-                ask_size = float(data["data"]["levels"][1][1])
-                imbalance = (bid_size - ask_size) / (bid_size + ask_size + 1e-6)
+                # Parse bids and asks
+                bids = [(float(level["px"]), float(level["sz"])) for level in bids_raw]
+                asks = [(float(level["px"]), float(level["sz"])) for level in asks_raw]
 
-                orderbooks[coin].update(mid_price, imbalance)
+                # Full depth imbalance calculation
+                bid_vol = sum(size for _, size in bids)
+                ask_vol = sum(size for _, size in asks)
+                imbalance = (bid_vol - ask_vol) / (bid_vol + ask_vol + 1e-6)
+
+                mid_price = (bids[0][0] + asks[0][0]) / 2
+
+                # ✅ Forward to buffers + orderbooks
+                orderbooks[coin].update(mid_price, imbalance, bids, asks)
                 update_buffer(coin, mid_price, None)
 
             elif data["channel"] == "trades":
@@ -51,7 +57,6 @@ async def stream_symbol(symbol):
                     coin = trade["coin"]
                     price = float(trade["px"])
                     size = float(trade["sz"])
-
                     update_buffer(coin, price, size)
 
             else:
