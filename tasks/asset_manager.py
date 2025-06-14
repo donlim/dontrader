@@ -50,6 +50,11 @@ async def debug_loop():
                 bids, asks = orderbook.get_depth()
                 full_imbalance = indicators.compute_full_book_imbalance(bids, asks)
                 top_imbalance = indicators.compute_book_imbalance(bids, asks, depth=5)
+                # 2.5B Liquidity Metrics
+                density_bid, density_ask = indicators.compute_book_density(bids, asks)
+                min_bid_gap, min_ask_gap = indicators.compute_liquidity_gap(bids, asks)
+                spread = indicators.compute_spread(bids, asks)
+                bid_volatility, ask_volatility = indicators.compute_top_volatility(bids, asks)
 
                 indicator_pack = {
                     'PRICE': price, 'EMA10': ema.get("EMA10"), 'EMA50': ema.get("EMA50"),
@@ -57,7 +62,8 @@ async def debug_loop():
                     'BOLLINGER': bb, 'ATR': atr, 'VWAP': vwap, 'OBV': obv, 'AD': ad,
                     'SUPPORT': support, 'RESISTANCE': resistance,
                     'STDDEV': stddev, 'SKEW': skew, 'KURTOSIS': kurt,
-                    'FULL_BOOK_IMB': full_imbalance, 'BOOK_IMB': top_imbalance,
+                    'FULL_BOOK_IMB': full_imbalance, 'BOOK_IMB': top_imbalance,'BID_DENSITY': density_bid, 'ASK_DENSITY': density_ask,
+                    'BID_GAP': min_bid_gap, 'ASK_GAP': min_ask_gap, 'SPREAD': spread, 'BID_VOL': bid_volatility,'ASK_VOL': ask_volatility
                 }
 
                 print(f"[{symbol}] Indicators: {indicator_pack}")

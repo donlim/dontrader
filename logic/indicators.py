@@ -190,3 +190,28 @@ def compute_full_book_imbalance(bids, asks):
 
     imbalance = (total_bid - total_ask) / (total_bid + total_ask)
     return imbalance
+
+def compute_book_density(bids, asks, depth=5):
+    bid_depth = sum(sz for px, sz in bids[:depth])
+    ask_depth = sum(sz for px, sz in asks[:depth])
+    return bid_depth, ask_depth
+
+def compute_liquidity_gap(bids, asks):
+    bid_gaps = [bids[i][0] - bids[i+1][0] for i in range(len(bids)-1)]
+    ask_gaps = [asks[i+1][0] - asks[i][0] for i in range(len(asks)-1)]
+    
+    min_bid_gap = min(bid_gaps) if bid_gaps else None
+    min_ask_gap = min(ask_gaps) if ask_gaps else None
+    return min_bid_gap, min_ask_gap
+
+def compute_spread(bids, asks):
+    if not bids or not asks:
+        return None
+    return asks[0][0] - bids[0][0]
+
+def compute_top_volatility(bids, asks):
+    best_bid_prices = [px for px, _ in bids[:3]]
+    best_ask_prices = [px for px, _ in asks[:3]]
+    bid_vol = max(best_bid_prices) - min(best_bid_prices) if len(best_bid_prices) >= 2 else 0
+    ask_vol = max(best_ask_prices) - min(best_ask_prices) if len(best_ask_prices) >= 2 else 0
+    return bid_vol, ask_vol
