@@ -11,13 +11,13 @@ BOLLINGER_WINDOW = 20
 BOLLINGER_K = 2.0
 ATR_WINDOW = 14
 SWING_LOOKBACK = 20
-SWING_TOLERANCE = 0.003
+SWING_TOLERANCE = 0.005  # ✅ updated tighter sensitivity
 STDDEV_WINDOW = 20
 SKEW_WINDOW = 20
 KURTOSIS_WINDOW = 20
 AD_WINDOW = 20
-SUPPORT_RESISTANCE_WINDOW = 20
-SUPPORT_RESISTANCE_TOLERANCE = 0.001
+SUPPORT_RESISTANCE_WINDOW = 50  # ✅ updated deeper support zone
+SUPPORT_RESISTANCE_TOLERANCE = 0.003  # ✅ updated stricter tolerance
 
 # === Order Book Parameters ===
 
@@ -51,31 +51,36 @@ SIGNAL_THRESHOLD = 0.25
 
 # === Risk Parameters ===
 
-MAX_POSITION_SIZE = 1        # max coin units per symbol (safety cap)
+MAX_POSITION_SIZE = 1
 DAILY_MAX_TRADES = 100
 MAX_LOSS_PER_DAY = 0.05
 
 # === Portfolio Risk Limits (Phase 3.8) ===
 
-MAX_POSITION_PCT = 0.15         # Max 15% of equity per symbol
-MAX_TOTAL_EXPOSURE_PCT = 0.50   # Max 50% total allocation
-DAILY_LOSS_LIMIT_PCT = 0.03     # Max 3% daily drawdown
+MAX_POSITION_PCT = 0.15
+MAX_TOTAL_EXPOSURE_PCT = 0.50
+DAILY_LOSS_LIMIT_PCT = 0.03
 
 # === Paper Trading Parameters (USD Allocation Mode) ===
 
 SYMBOLS = ['BTC', 'ETH', 'HYPE']
 STARTING_BALANCE = 100_000
-RISK_PER_TRADE = 1000
+RISK_PER_TRADE = 500  # ✅ updated lower risk per trade
 FEES = 0.0005
 POSITION_SCALING_POWER = 2.0
 
-MAX_POSITION_NOTIONAL = 1500  # or whatever exact USD size you want
+MAX_POSITION_NOTIONAL = 3000  # ✅ updated larger scaling cap
 
 # === Exchange Parameters ===
 
 EXCHANGE_FEE_RATE = FEES
 
-# === 🔥 Live Price Initialization (for risk_manager live_prices state) ===
+# === Execution Cost Model (NEW V4)
+
+SLIPPAGE_BPS = 5  # slippage in basis points
+IMPACT_BPS = 10   # market impact in basis points
+
+# === Live Price Initialization (for risk_manager live_prices state)
 
 SYMBOL_STARTING_PRICES = {
     'BTC': 105000,
