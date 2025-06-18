@@ -1,7 +1,7 @@
-# trading_bot/logic/risk_manager.py
+# trading_bot/logic/risk_manager_v4.py
 
 """
-3.9.9+ - Fully Synced Professional Risk Manager (Unified Paper Account State)
+Phase 4 — Fully Synced Institutional Risk Manager (V4 Portfolio Optimizer Ready)
 """
 
 import math
@@ -26,21 +26,32 @@ def initialize_risk_manager():
 def update_live_prices(price_store):
     risk_state['live_prices'] = price_store
 
-# === Position Sizing (ATR + Confidence Scaling) ===
+# === Position Sizing (ATR + Confidence Scaling + Equity Normalization) ===
 
 def compute_position_size(symbol, price, atr, score):
     min_atr = max(atr, price * 0.001)
     stop_distance = min_atr * 2
-    dollar_risk = parameters.RISK_PER_TRADE
 
-    base_size = dollar_risk / stop_distance
+    # Normalize dollar risk to current equity (very important for long runs)
+    current_equity = compute_total_equity(get_latest_prices())
+    normalized_risk_per_trade = min(parameters.RISK_PER_TRADE, 0.02 * current_equity)
+
+    base_size = normalized_risk_per_trade / stop_distance
 
     confidence = max(0, score)
     scaling = confidence ** parameters.POSITION_SCALING_POWER
     adjusted_size = base_size * scaling
 
     allocated_capital = min(adjusted_size * price, get_current_balance())
-    allocated_capital = min(allocated_capital, parameters.MAX_POSITION_NOTIONAL)
+
+    # Allow symbol-dependent notional caps (more precise)
+    symbol_notional_limits = {
+        "BTC": 1500,
+        "ETH": 1000,
+        "HYPE": 500
+    }
+    max_notional = symbol_notional_limits.get(symbol, parameters.MAX_POSITION_NOTIONAL)
+    allocated_capital = min(allocated_capital, max_notional)
 
     return allocated_capital / price
 
@@ -76,7 +87,7 @@ def check_daily_loss_limit():
         return False
     return True
 
-# === Account State Helpers (now fully unified on paper_engine) ===
+# === Account State Helpers (fully unified on paper_engine) ===
 
 def get_current_balance():
     return paper_engine.get_balance()
@@ -97,3 +108,9 @@ def compute_total_positions_value(prices):
         price = prices.get(symbol, 0)
         total += position * price
     return total
+
+# === (NEW) Expose total equity for optimizer engines ===
+
+def get_total_equity():
+    prices = get_latest_prices()
+    return compute_total_equity(prices)
