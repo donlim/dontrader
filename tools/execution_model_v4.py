@@ -1,8 +1,22 @@
-# trading_bot/tools/execution_model_v4.py
-
 import numpy as np
 import random
 from config import parameters
+
+# === Trade Gating Logic Based on Indicator Filters (V4) ===
+
+def is_trade_valid(row):
+    try:
+        if row.get("KURTOSIS", 1.0) < getattr(parameters, "KURTOSIS_THRESHOLD", 0.0):
+            return False
+        if row.get("STDDEV", 1.0) < getattr(parameters, "STDDEV_THRESHOLD", 0.0):
+            return False
+        if row.get("SPREAD", 0.0) > getattr(parameters, "SPREAD_MAX", 1.0):
+            return False
+        if row.get("VOLATILITY", 0.0) > getattr(parameters, "VOLATILITY_MAX", 1.0):
+            return False
+        return True
+    except Exception:
+        return True  # fallback to safe trade if anything is missing
 
 # === Core Fill Simulation ===
 
@@ -33,7 +47,7 @@ def simulate_trade_execution(price, side, notional):
 
 def simulate_portfolio_with_execution(df, weights):
     """
-    Full backtest portfolio simulation with execution costs applied.
+    Full backtest portfolio simulation with execution costs + gating logic.
     """
     starting_balance = parameters.STARTING_BALANCE
     threshold = parameters.SIGNAL_THRESHOLD
@@ -50,21 +64,24 @@ def simulate_portfolio_with_execution(df, weights):
         # Score calculation (same as optimizer scoring function)
         score = sum(weights.get(k, 0) * row.get(k, 0) for k in weights)
 
-        # Simple threshold logic
-        if score > threshold:
+        # === Trade only if score is strong and indicator filter passes ===
+        if score > threshold and is_trade_valid(row):
             notional = min(parameters.RISK_PER_TRADE, balances[symbol])
             qty, fees = simulate_trade_execution(price, "BUY", notional)
             balances[symbol] -= (qty * price + fees)
             positions[symbol] += qty
 
-        elif score < -threshold:
+        elif score < -threshold and is_trade_valid(row):
             position_notional = positions[symbol] * price
             qty, fees = simulate_trade_execution(price, "SELL", position_notional)
             balances[symbol] += (qty * price - fees)
             positions[symbol] -= qty
 
     # Final equity calculation
-    final_equity = sum(balances[symbol] + positions[symbol] * df[df['symbol'] == symbol].iloc[-1]['price'] for symbol in balances)
+    final_equity = sum(
+        balances[symbol] + positions[symbol] * df[df['symbol'] == symbol].iloc[-1]['price']
+        for symbol in balances
+    )
     return final_equity
 
 def apply_execution_costs(df, weights):

@@ -33,21 +33,28 @@ LIQUIDITY_GAP_THRESHOLD = 0.05
 SPREAD_THRESHOLD = 1.0
 VOLATILITY_THRESHOLD = 1.0
 
-# === Phase 3 Pro Signal Engine Weights ===
+# === Optimized Signal Weights (from best_weights_v4_20250618_085445.json) ===
 
 SIGNAL_WEIGHTS = {
-    "DELTA_FLOW": 0.4,
-    "BOOK_IMB": 0.3,
-    "PRESSURE": 0.15,
-    "SLOPE": 0.05,
-    "LIQUIDITY_GAP": 0.05,
-    "SPREAD": 0.025,
-    "VOLATILITY": 0.025
+    "DELTA_FLOW": 0.02,
+    "BOOK_IMB": 0.69,
+    "PRESSURE": 0.82,
+    "SLOPE": 0.61,
+    "LIQUIDITY_GAP": 0.35,
+    "SPREAD": 0.66,
+    "VOLATILITY": 0.31
 }
 
 # === Master Decision Threshold ===
 
-SIGNAL_THRESHOLD = 0.25
+SIGNAL_THRESHOLD = 0.6  # 🔺 updated higher to filter low-confidence trades
+
+# === Indicator-Based Trade Filters (NEW V4 gating layer) ===
+
+KURTOSIS_THRESHOLD = 0.25       # ✅ top optimizer weight = 1.0
+STDDEV_THRESHOLD = 0.2          # ✅ optimizer weight = 0.82
+SPREAD_MAX = 0.3                # ✅ optimizer weight = 0.66
+VOLATILITY_MAX = 0.4            # ✅ optimizer weight = 0.31
 
 # === Risk Parameters ===
 
@@ -80,7 +87,7 @@ EXCHANGE_FEE_RATE = FEES
 SLIPPAGE_BPS = 5  # slippage in basis points
 IMPACT_BPS = 10   # market impact in basis points
 
-# === Live Price Initialization (for risk_manager live_prices state)
+# === Live Price Initialization (for risk_manager live_prices state) ===
 
 SYMBOL_STARTING_PRICES = {
     'BTC': 105000,
