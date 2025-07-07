@@ -28,23 +28,41 @@ def update_live_prices(price_store):
 
 # === Position Sizing (ATR + Confidence Scaling + Equity Normalization) ===
 
-def compute_position_size(symbol, price, atr, score):
-    min_atr = max(atr, price * 0.001)
+def compute_position_size(symbol, price, atr, score, meta_confidence=None):
+    """
+    Industry-level position sizing:
+    - Risk-based sizing with ATR stop distance
+    - Confidence scaling (score)
+    - Meta-confidence scaling (new)
+    - Capital constraints per symbol
+    """
+
+    # === ATR stop calculation ===
+    min_atr = max(atr, price * 0.001) if atr else price * 0.001
     stop_distance = min_atr * 2
 
-    # Normalize dollar risk to current equity (very important for long runs)
+    # === Current equity normalization ===
     current_equity = compute_total_equity(get_latest_prices())
     normalized_risk_per_trade = min(parameters.RISK_PER_TRADE, 0.02 * current_equity)
 
+    # === Base position size based on risk per trade and stop distance ===
     base_size = normalized_risk_per_trade / stop_distance
 
+    # === Score-based confidence scaling ===
     confidence = max(0, score)
-    scaling = confidence ** parameters.POSITION_SCALING_POWER
-    adjusted_size = base_size * scaling
+    score_scaling = confidence ** parameters.POSITION_SCALING_POWER
 
+    # === Meta-confidence scaling ===
+    if meta_confidence is None:
+        meta_confidence = 0.5  # fallback neutral confidence
+    meta_scaling = meta_confidence ** parameters.CONFIDENCE_SCALING_POWER
+
+    # === Adjusted position size ===
+    adjusted_size = base_size * score_scaling * meta_scaling
+
+    # === Capital constraints ===
     allocated_capital = min(adjusted_size * price, get_current_balance())
 
-    # Allow symbol-dependent notional caps (more precise)
     symbol_notional_limits = {
         "BTC": 1500,
         "ETH": 1000,
@@ -53,7 +71,11 @@ def compute_position_size(symbol, price, atr, score):
     max_notional = symbol_notional_limits.get(symbol, parameters.MAX_POSITION_NOTIONAL)
     allocated_capital = min(allocated_capital, max_notional)
 
-    return allocated_capital / price
+    final_size = allocated_capital / price
+
+    print(f"[{symbol}] Size calculation – ATR: {min_atr:.4f}, Confidence: {confidence:.3f}, Meta: {meta_confidence:.3f}, Final Size: {final_size:.4f}")
+
+    return final_size
 
 # === Portfolio-Level Limits ===
 

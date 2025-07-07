@@ -1,15 +1,15 @@
 # trading_bot/state/book_features.py
 
 from collections import deque, defaultdict
-
-FEATURE_WINDOW = 10  # how many recent snapshots to smooth over
+from trading_bot.config import parameters
+FEATURE_WINDOW = parameters.FEATURE_WINDOW
 
 class BookFeatureBuffer:
     def __init__(self):
         self.features = deque(maxlen=FEATURE_WINDOW)
         self.delta_features = deque(maxlen=FEATURE_WINDOW)
 
-    # ✅ Update liquidity features (density, spread, gaps, etc.)
+    # ✅ Update liquidity features (density, spread, gaps, slope, volatility)
     def update(self, feature_dict):
         self.features.append(feature_dict)
 
@@ -26,8 +26,15 @@ class BookFeatureBuffer:
         keys = self.features[0].keys()
 
         for key in keys:
-            total = sum(f[key] for f in self.features)
+            total = sum(f[key] for f in self.features if f[key] is not None)
             avg[key] = total / len(self.features)
+
+        # === Derived smoothed metrics ===
+        if 'BID_SLOPE' in avg and 'ASK_SLOPE' in avg:
+            avg['SLOPE'] = avg['BID_SLOPE'] - avg['ASK_SLOPE']
+        if 'BID_VOL' in avg and 'ASK_VOL' in avg:
+            avg['VOLATILITY'] = (avg['BID_VOL'] + avg['ASK_VOL']) / 2.0
+
         return avg
 
     # ✅ Smooth delta flow

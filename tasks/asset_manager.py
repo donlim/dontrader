@@ -42,7 +42,7 @@ for symbol in SYMBOLS:
         indicators.update_ema(symbol, window, None)
 
 initialize_positions(SYMBOLS)
-
+print("🚀 Starting asset manager...")
 async def debug_loop():
     while True:
         await asyncio.sleep(5)
@@ -63,8 +63,23 @@ async def debug_loop():
             for window in parameters.EMA_WINDOWS:
                 indicators.update_ema(symbol, window, price)
 
+            # ✅ Extract prices/volumes safely
+            prices = [p['price'] for p in buffer]
+            volumes = [p['volume'] or 0 for p in buffer]
+            highs = [p.get('high', p['price']) for p in buffer]
+            lows = [p.get('low', p['price']) for p in buffer]
+            opens = [p.get('open', p['price']) for p in buffer]
+            closes = prices
+
             ema = {f"EMA{w}": indicators.get_ema(symbol, w) for w in parameters.EMA_WINDOWS}
+            ema10 = ema.get("EMA10")
+            ema50 = ema.get("EMA50")
+            ema_diff = ema10 - ema50 if ema10 is not None and ema50 is not None else 0
+
             sma = {f"SMA{w}": indicators.compute_sma(prices[-w:]) for w in parameters.SMA_WINDOWS}
+            sma50 = sma.get("SMA50")
+            sma200 = sma.get("SMA200")
+
             rsi = indicators.compute_rsi(prices, parameters.RSI_WINDOW)
             stoch_rsi = indicators.compute_stoch_rsi(prices, parameters.RSI_WINDOW, parameters.STOCH_WINDOW)
             mom = indicators.compute_momentum(prices, parameters.MOMENTUM_WINDOW)
@@ -74,13 +89,26 @@ async def debug_loop():
             vwap = indicators.compute_vwap(prices, volumes)
             obv = indicators.compute_obv(prices, volumes)
             ad = indicators.compute_accumulation_distribution(prices, volumes, parameters.AD_WINDOW)
-            support, resistance = indicators.detect_support_resistance(
-                prices, parameters.SUPPORT_RESISTANCE_WINDOW, parameters.SUPPORT_RESISTANCE_TOLERANCE
-            )
+            support, resistance = indicators.detect_support_resistance(prices, parameters.SUPPORT_RESISTANCE_WINDOW, parameters.SUPPORT_RESISTANCE_TOLERANCE)
             stddev = indicators.compute_stddev(prices, parameters.STDDEV_WINDOW)
             skew_val = indicators.compute_skew(prices, parameters.SKEW_WINDOW)
             kurt_val = indicators.compute_kurtosis(prices, parameters.KURTOSIS_WINDOW)
 
+            # ✅ Pass highs/lows for ADX
+            adx = indicators.compute_adx(highs, lows, prices, parameters.ADX_WINDOW)
+            cci = indicators.compute_cci(highs, lows, closes, parameters.CCI_WINDOW)
+            roc = indicators.compute_roc(prices, parameters.ROC_WINDOW)
+            tsi = indicators.compute_tsi(prices, parameters.TSI_FAST, parameters.TSI_SLOW)
+            kvo = indicators.compute_kvo(closes, volumes, parameters.KVO_FAST, parameters.KVO_SLOW)
+            williams_r = indicators.compute_williams_r(highs, lows, closes, parameters.WILLIAMS_R_WINDOW)
+            donchian_upper, donchian_lower = indicators.compute_donchian_channels(highs, lows, parameters.DONCHIAN_WINDOW)
+            parabolic_sar = indicators.compute_parabolic_sar(highs, lows, parameters.PARABOLIC_SAR_STEP, parameters.PARABOLIC_SAR_MAX_STEP)
+            trend_strength = indicators.compute_trend_strength(prices, highs, lows)
+            heikin_ratio = indicators.compute_heikin_ashi_ratio(opens, highs, lows, closes)
+            cmf = indicators.compute_cmf(highs, lows, closes, volumes, parameters.CMF_WINDOW)
+            donchian_width = indicators.compute_donchian_width(highs, lows, parameters.DONCHIAN_WINDOW)
+
+            # === Order book features ===
             orderbook = orderbooks[symbol]
             bids, asks = orderbook.get_depth()
             full_imbalance = indicators.compute_full_book_imbalance(bids, asks)
@@ -101,12 +129,17 @@ async def debug_loop():
             delta_flow = book_buffer.get_delta_flow()
 
             indicator_pack = {
-                'PRICE': price, 'EMA10': ema.get("EMA10"), 'EMA50': ema.get("EMA50"),
+                'PRICE': price, 'EMA10': ema10, 'EMA50': ema50, 'EMA_DIFF': ema_diff,
                 'MACD': macd, 'RSI': rsi, 'STOCH_RSI': stoch_rsi, 'MOMENTUM': mom,
                 'BOLLINGER': bb, 'ATR': atr, 'VWAP': vwap, 'OBV': obv, 'AD': ad,
                 'SUPPORT': support, 'RESISTANCE': resistance,
                 'STDDEV': stddev, 'SKEW': skew_val, 'KURTOSIS': kurt_val,
-                'FULL_BOOK_IMB': full_imbalance, 'BOOK_IMB': top_imbalance, 'DELTA_FLOW': delta_flow
+                'FULL_BOOK_IMB': full_imbalance, 'BOOK_IMB': top_imbalance, 'DELTA_FLOW': delta_flow,
+                'ADX': adx, 'CCI': cci, 'ROC': roc, 'TSI': tsi, 'KVO': kvo,
+                'WILLIAMS_R': williams_r, 'DONCHIAN_UPPER': donchian_upper,
+                'DONCHIAN_LOWER': donchian_lower, 'PARABOLIC_SAR': parabolic_sar,
+                'TREND_STRENGTH': trend_strength, 'SMA50': sma50, 'SMA200': sma200,
+                'HEIKIN_RATIO': heikin_ratio, 'CMF': cmf, 'DONCHIAN_WIDTH': donchian_width
             }
 
             if smoothed_features:
@@ -120,15 +153,16 @@ async def debug_loop():
             print(f"[{symbol}] Signal: {signal} | Decision: {final_decision} | Score: {final_score:.3f} | Sub-Scores: {sub_scores}")
             print(f"[{symbol}] Indicators: {indicator_pack}")
 
-            # ✅ Log after every eval
             log_entry = {
+                "timestamp": time.time(),
                 "symbol": symbol,
                 "price": price,
                 "decision": final_decision,
                 "score": final_score,
                 "sub_scores": {k: float(v) for k, v in sub_scores.items()},
-                "timestamp": time.time()
+                "indicators": {k: float(v) if isinstance(v, (int, float)) else v for k, v in indicator_pack.items()}
             }
+
             with open(log_file, "a") as f:
                 f.write(json.dumps(log_entry) + "\n")
 
@@ -140,3 +174,6 @@ async def launch_all():
         websocket.handle_websocket(),
         debug_loop()
     )
+
+if __name__ == "__main__":
+    asyncio.run(launch_all())

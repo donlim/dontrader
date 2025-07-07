@@ -1,0 +1,93 @@
+🔵 Trend (10)
+	1.	EMA
+	2.	SMA
+	3.	ADX
+	4.	Parabolic SAR
+	5.	Composite Trend Strength
+	6.	DEMA
+	7.	TEMA
+	8.	Vortex Indicator (VI+, VI−)
+	9.	TRIX
+	10.	Supertrend
+
+⸻
+
+🟠 Momentum (13)
+	11.	RSI
+	12.	MACD
+	13.	Momentum
+	14.	Stochastic RSI
+	15.	CCI
+	16.	ROC
+	17.	TSI
+	18.	Williams %R
+	19.	Heikin Ashi Ratio
+	20.	CMO
+	21.	Fisher Transform
+	22.	Z-Score
+	23.	Hilbert Dominant Cycle Period (placeholder)
+
+⸻
+
+🟡 Volatility (6)
+	24.	Bollinger Bands
+	25.	ATR
+	26.	Standard Deviation
+	27.	Skew
+	28.	Kurtosis
+	29.	Keltner Channels
+
+⸻
+
+🟢 Volume / Accumulation (13)
+	30.	OBV
+	31.	VWAP
+	32.	ADL
+	33.	Accumulation Distribution
+	34.	KVO
+	35.	CMF
+	36.	Anchored VWAP
+	37.	Rolling VWAP
+	38.	Ease of Movement (EOM)
+	39.	Money Flow Index (MFI)
+	40.	Force Index
+	41.	Volume Oscillator
+	42.	(Anchored + Rolling VWAP → Optionally under Orderbook)
+
+⸻
+
+🟫 Support / Resistance (3)
+	43.	Support and Resistance Levels
+	44.	Donchian Channels
+	45.	Donchian Width
+
+⸻
+
+🔴 Orderbook / Microstructure (11)
+	46.	Book Imbalance
+	47.	Full Book Imbalance
+	48.	Book Density
+	49.	Liquidity Gap
+	50.	Spread
+	51.	Top-of-Book Volatility
+	52.	Rolling VWAP
+	53.	Anchored VWAP
+	54.	Book Pressure Ratio
+	55.	Book Slope
+	56.	Chaikin Oscillator
+
+⸻
+
+🟣 Price Action / Candlestick (4)
+	57.	Candle Body Ratio ✅
+	58.	Wick Percentage (Upper/Lower) ✅
+	59.	3-Bar Reversal Pattern ✅
+	60.	Engulfing Candle Pattern ✅
+
+⸻
+
+⚫️ Risk / Return Metrics (4)
+	61.	Max Drawdown ✅
+	62.	Sharpe Ratio ✅
+	63.	Ulcer Index ✅
+	64.	Average Holding Time (for closed trades) ✅
