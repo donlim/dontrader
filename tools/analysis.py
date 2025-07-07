@@ -5,9 +5,11 @@ import json
 import glob
 import pandas as pd
 import matplotlib.pyplot as plt
+import seaborn as sns
+
+from trading_bot.config import parameters
 
 # === Load one full session ===
-
 def load_session(session_path):
     logs = []
     log_file = os.path.join(session_path, "trade_logs.jsonl")
@@ -17,7 +19,6 @@ def load_session(session_path):
     return pd.DataFrame(logs)
 
 # === Simple PnL calculation ===
-
 def compute_pnl(df, starting_balance=100000, fee_rate=0.0005):
     cash = starting_balance
     positions = {}
@@ -36,13 +37,11 @@ def compute_pnl(df, starting_balance=100000, fee_rate=0.0005):
         # Use very simple size formula: 1000 USD per trade
         trade_usd = 1000 * (score ** 2 if score > 0 else 0.5)
         size = trade_usd / price
-
         fee = price * size * fee_rate
 
         if side == 'BUY':
             cash -= (price * size + fee)
             positions[sym] += size
-
         elif side == 'SELL':
             cash += (price * size - fee)
             positions[sym] -= size
@@ -56,8 +55,29 @@ def compute_pnl(df, starting_balance=100000, fee_rate=0.0005):
 
     return pd.DataFrame(pnl_records)
 
-# === Session Analyzer ===
+# === Correlation Heatmap for Sub-scores ===
+def plot_subscore_correlations(df):
+    sub_scores = df['sub_scores'].dropna().apply(pd.Series)
 
+    if sub_scores.empty:
+        print("⚠️ No sub_scores found.")
+        return
+
+    plt.figure(figsize=(14, 10))
+    corr = sub_scores.corr()
+    sns.heatmap(corr, annot=True, fmt=".2f", cmap="coolwarm")
+    plt.title("📈 Sub-Score Correlation Matrix")
+    plt.tight_layout()
+    plt.show()
+
+    # Correlation with total score
+    if 'score' in df.columns:
+        merged = pd.concat([sub_scores, df['score']], axis=1)
+        corrs = merged.corr()['score'].sort_values(ascending=False)
+        print("\n🔍 Correlation with final score:")
+        print(corrs)
+
+# === Session Analyzer ===
 def analyze_session(session_path):
     print(f"\n📊 Analyzing session: {session_path}")
     df = load_session(session_path)
@@ -66,19 +86,24 @@ def analyze_session(session_path):
     print(pnl_df.tail())
 
     # Plot PnL curve
-    plt.figure(figsize=(10,5))
-    plt.plot(pnl_df['timestamp'], pnl_df['total_equity'])
+    plt.figure(figsize=(10, 5))
+    plt.plot(pnl_df['timestamp'], pnl_df['total_equity'], label='Equity')
     plt.title("Equity Curve")
     plt.xlabel("Timestamp")
     plt.ylabel("Total Equity")
+    plt.grid(True)
+    plt.legend()
+    plt.tight_layout()
     plt.show()
 
     # Signal Distribution
     print("\n✅ Signal Distribution:")
     print(df['decision'].value_counts())
 
-# === Main Entry ===
+    # Sub-score correlation matrix
+    plot_subscore_correlations(df)
 
+# === Main Entry ===
 if __name__ == "__main__":
     sessions = glob.glob("logs/session_*")
     sessions.sort()

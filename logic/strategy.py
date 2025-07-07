@@ -1,5 +1,7 @@
 # trading_bot/logic/strategy.py
-
+# NOTE: Currently unused in main pipeline.
+# This module defines legacy rule-based scoring logic.
+# Consider integrating as a sub-score feature in Phase 5 ML tabular models.
 from trading_bot.config import strategy_loader
 
 def calculate_score(symbol, indicators, orderbook_data):

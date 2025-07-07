@@ -13,14 +13,19 @@ def initialize_positions(symbols):
     global positions
     positions = {symbol: 0 for symbol in symbols}
 
-def evaluate_position(symbol, signal):
-    """
-    Basic position management:
-    - Only 1 unit per position.
-    - Avoids flipping rapidly.
-    """
-    current = positions.get(symbol, 0)
+def evaluate_position(symbol, smoothed_score):
+    mode = parameters.CURRENT_MODE
+    buy_threshold = parameters.BOT_MODES[mode]["buy_threshold"]
+    sell_threshold = parameters.BOT_MODES[mode]["sell_threshold"]
 
+    if smoothed_score > buy_threshold:
+        signal = 'BUY'
+    elif smoothed_score < sell_threshold:
+        signal = 'SELL'
+    else:
+        signal = 'HOLD'
+
+    current = positions.get(symbol, 0)
     if signal == 'BUY' and current < 1:
         positions[symbol] += 1
         return 'BUY'
@@ -29,6 +34,3 @@ def evaluate_position(symbol, signal):
         return 'SELL'
     else:
         return 'HOLD'
-    
-def get_position(symbol):
-    return positions.get(symbol, 0)
