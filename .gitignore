@@ -2,3 +2,12 @@
 __pycache__/
 *.pyc
 prev runs json/
+.DS_Store
+__pycache__/
+*.pyc
+logs/
+*.jsonl
+prev runs json/
+best_weights*.json
+training_dataset*.csv
+.env
