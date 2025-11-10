@@ -1,4 +1,4 @@
-# trading_bot/tasks/asset_manager.py
+# trading_bot/tasks/asset_manager_64.py
 
 import asyncio
 import json
@@ -21,6 +21,9 @@ from trading_bot.logic import risk_manager
 from trading_bot.execution import execution_engine
 from trading_bot.execution import paper_engine
 from trading_bot.execution.trade_executor import process_trade_decision
+from trading_bot.config import paths
+
+
 
 def to_scalar_safe(x):
     if isinstance(x, pd.Series):
@@ -31,7 +34,7 @@ def to_scalar_safe(x):
 
 # === Setup dynamic log directory for each run ===
 run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-session_dir = os.path.join("logs", f"session_{run_timestamp}")
+session_dir = os.path.join(paths.LOG_ROOT, f"session_{run_timestamp}")   # <-- changed
 os.makedirs(session_dir, exist_ok=True)
 
 # ✅ Save parameters snapshot into the session folder
@@ -41,7 +44,8 @@ with open(param_file, "w") as f:
     json.dump(param_snapshot, f, indent=4, default=str)
 
 # === Setup log files ===
-log_file = os.path.join(session_dir, "trade_logs.jsonl")
+param_file = os.path.join(session_dir, "parameters_snapshot.json")
+log_file   = os.path.join(session_dir, "trade_logs.jsonl")
 raw_log_file = os.path.join(session_dir, "raw_indicators.jsonl")
 
 # === Live price store ===

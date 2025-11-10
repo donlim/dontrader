@@ -7,46 +7,65 @@ Final Paper Trading Execution Engine
 - Tracks positions, equity, PnL
 """
 
+from __future__ import annotations
+
 import time
+
 from trading_bot.config import parameters
 from trading_bot.logic.signals import generate_signal
 from trading_bot.logic.risk import evaluate_position
-from trading_bot.config.config import SYMBOLS
 # === Paper Trading State ===
 paper_account = {
     'balance': parameters.STARTING_BALANCE,
-    'positions': {symbol: 0 for symbol in parameters.SYMBOLS},
+    'positions': {symbol: 0.0 for symbol in parameters.SYMBOLS},
     'pnl': 0.0,
     'trades': []
 }
 
 def initialize_paper_account(symbols=parameters.SYMBOLS):
     paper_account['balance'] = parameters.STARTING_BALANCE
-    paper_account['positions'] = {symbol: 0 for symbol in symbols}
+    paper_account['positions'] = {symbol: 0.0 for symbol in symbols}
     paper_account['pnl'] = 0.0
     paper_account['trades'] = []
     print("✅ Paper account initialized.")
 
-def execute_paper_trade(symbol, price, decision, score):
-    if decision not in ['BUY', 'SELL']:
-        return
-
-    confidence = max(0, score)
+def _infer_position_size(score: float, price: float) -> float:
+    if price <= 0:
+        return 0.0
+    confidence = max(0.0, float(score))
     scaling_factor = confidence ** parameters.POSITION_SCALING_POWER
     allocated_capital = scaling_factor * parameters.RISK_PER_TRADE
     allocated_capital = min(allocated_capital, paper_account['balance'])
+    return allocated_capital / price if price > 0 else 0.0
 
-    size = allocated_capital / price
-    fee = price * size * parameters.FEES
+def execute_paper_trade(symbol, price, decision, score, *, size: float | None = None):
+    if decision not in ['BUY', 'SELL'] or price is None or price <= 0:
+        return
+
+    paper_account['positions'].setdefault(symbol, 0.0)
+
+    trade_size = float(size) if size is not None else _infer_position_size(score, price)
+    if trade_size <= 0:
+        return
 
     if decision == 'BUY':
-        paper_account['balance'] -= (price * size + fee)
-        paper_account['positions'][symbol] += size
-    elif decision == 'SELL':
-        paper_account['balance'] += (price * size - fee)
-        paper_account['positions'][symbol] -= size
+        max_affordable = paper_account['balance'] / (price * (1 + parameters.FEES))
+        trade_size = min(trade_size, max_affordable)
+        if trade_size <= 0:
+            return
+        fee = price * trade_size * parameters.FEES
+        paper_account['balance'] -= (price * trade_size + fee)
+        paper_account['positions'][symbol] += trade_size
+    else:  # SELL
+        held = paper_account['positions'].get(symbol, 0.0)
+        trade_size = min(trade_size, held)
+        if trade_size <= 0:
+            return
+        fee = price * trade_size * parameters.FEES
+        paper_account['balance'] += (price * trade_size - fee)
+        paper_account['positions'][symbol] -= trade_size
 
-    log_trade(symbol, price, size, decision, fee)
+    log_trade(symbol, price, trade_size, decision, fee)
 
 def log_trade(symbol, price, size, side, fee):
     trade = {
@@ -69,15 +88,28 @@ def simulate_portfolio_with_execution(df, weights):
         price = row['price']
         indicators = {k: row.get(k, 0) for k in weights}
 
-        signal, _, score = generate_signal(indicators, weights)
-        decision = evaluate_position(symbol, signal)
+        (
+            signal,
+            _category_subscores,
+            final_score,
+            _normalized_scores,
+            _meta_confidence,
+            _mode_used,
+            _top_inds,
+        ) = generate_signal(indicators, weights)
+        decision = evaluate_position(symbol, final_score)
 
-        execute_paper_trade(symbol, price, decision, score)
+        execute_paper_trade(symbol, price, decision, final_score)
 
-    return {
-        symbol: paper_account['positions'][symbol] * df[df['symbol'] == symbol]['price'].iloc[-1]
-        for symbol in parameters.SYMBOLS
-    }
+    results = {}
+    for symbol in parameters.SYMBOLS:
+        symbol_rows = df[df['symbol'] == symbol]
+        if symbol_rows.empty:
+            continue
+        last_price = symbol_rows['price'].iloc[-1]
+        size = paper_account['positions'].get(symbol, 0.0)
+        results[symbol] = size * last_price
+    return results
 
 def summarize_account(latest_prices):
     summary = {
@@ -123,14 +155,23 @@ def get_positions():
 
 # trading_bot/execution/paper_engine.py
 
-def update_total_pnl(price_store, positions):
-    for symbol in SYMBOLS:
-        pos = positions.get(symbol)
-        if pos and pos['entry_price'] is not None:
-            current_price = price_store.get(symbol)
-            if current_price:
-                size = pos['size']
-                entry_price = pos['entry_price']
-                pnl = (current_price - entry_price) * size
-                account_pnl[symbol] = pnl
-                print(f"[PNL] {symbol}: {pnl:.2f}")
+def update_total_pnl(price_store, positions=None):
+    """
+    Lightweight mark-to-market summary for live loops.
+    """
+    positions = positions or paper_account['positions']
+    if positions is None:
+        return {}
+
+    per_symbol = {}
+    total_equity = paper_account['balance']
+    for symbol, qty in positions.items():
+        current_price = price_store.get(symbol)
+        if current_price is None:
+            continue
+        mtm = qty * current_price
+        per_symbol[symbol] = mtm
+        total_equity += mtm
+
+    print(f"[PNL] cash={paper_account['balance']:.2f} | equity={total_equity:.2f}")
+    return {'cash': paper_account['balance'], 'per_symbol': per_symbol, 'equity': total_equity}

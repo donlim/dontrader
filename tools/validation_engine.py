@@ -25,6 +25,22 @@ def train_test_split(df, test_ratio=0.2, seed=42):
 
 # === 2️⃣ Validation Logic ===
 
+def _total_equity(sim_result) -> float:
+    """
+    Convert SimulationResult (or scalar fallback) into a float equity figure.
+    """
+    if sim_result is None:
+        return 0.0
+    if hasattr(sim_result, "final"):
+        try:
+            return float(sum(sim_result.final.values()))
+        except Exception:
+            pass
+    try:
+        return float(sim_result)
+    except Exception:
+        return 0.0
+
 def validate_model(train_df, test_df, weights, verbose=True):
     """
     Run backtest simulation on both train and test sets using the same weights.
@@ -38,8 +54,10 @@ def validate_model(train_df, test_df, weights, verbose=True):
     Returns:
         (train_equity, test_equity): Final equity for both sets.
     """
-    train_equity = run_simulation(train_df, weights)
-    test_equity = run_simulation(test_df, weights)
+    train_res = run_simulation(train_df, weights)
+    test_res = run_simulation(test_df, weights)
+    train_equity = _total_equity(train_res)
+    test_equity = _total_equity(test_res)
 
     if verbose:
         print("\n========== 📊 VALIDATION REPORT ==========")
