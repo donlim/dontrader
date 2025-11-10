@@ -1,21 +1,82 @@
+# --- OS / Editor Noise ---
 .DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Python Cache ---
 __pycache__/
 *.pyc
-prev runs json/
-.DS_Store
-__pycache__/
-*.pyc
-logs/
-*.jsonl
-prev runs json/
-best_weights*.json
-training_dataset*.csv
-.env.DS_Store
-__pycache__/
-*.pyc
-logs/
-*.jsonl
-prev runs json/
-best_weights*.json
-training_dataset*.csv
+*.pyo
+*.pyd
+
+# --- Environment / Secrets ---
 .env
+.env.*
+*.key
+*.pem
+*.crt
+
+# --- Logs & Artifacts (centralized) ---
+# Shared roots defined in trading_bot/config/paths.py
+data/
+logs/
+artifacts/
+# External override paths (if TB_* env vars point elsewhere)
+*/data/
+*/logs/
+*/artifacts/
+
+# --- Generated Training / Optimizer Outputs ---
+*.jsonl
+*.csv
+best_weights*.json
+training_dataset*.csv
+*_best.json
+*_metrics.json
+current.json
+reports/
+weights/
+datasets/
+
+# --- Checkpoints / Large Binary Files ---
+*.h5
+*.pt
+*.ckpt
+*.pkl
+*.npz
+*.npy
+
+# --- Previous Run Snapshots / Temporary Dirs ---
+prev runs json/
+session_*/
+tmp/
+temp/
+
+# --- Local Dev / Build ---
+dist/
+build/
+*.egg-info/
+MANIFEST
+*.log
+*.out
+*.bak
+*.tmp
+*.pid
+
+# --- Jupyter / Interactive ---
+.ipynb_checkpoints/
+*.ipynb
+
+# --- System Specific (Mac/Linux) ---
+Icon?
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# --- Optional Keepers ---
+!data/.gitkeep
+!artifacts/.gitkeep
+!logs/.gitkeep

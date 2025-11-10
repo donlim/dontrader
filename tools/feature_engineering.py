@@ -1,138 +1,228 @@
+# trading_bot/tools/feature_engineering.py
+
 import os
 import json
 import glob
-import pandas as pd
+from typing import List, Dict, Any, Set
+
 import numpy as np
+import pandas as pd
 from trading_bot.config import parameters
 
-# === 1️⃣ Load all sessions from JSONL logs ===
-def load_sessions(log_path="logs"):
-    records = []
+# === Canonical feature set (what we ultimately want as columns) ===
+FEATURE_SET: Set[str] = set(getattr(parameters, "INDICATOR_NAMES", [])) | set(parameters.SIGNAL_WEIGHTS.keys())
 
-    if os.path.isdir(log_path):
-        session_folders = glob.glob(os.path.join(log_path, "session_*"))
-        if session_folders:
-            for session_path in session_folders:
-                log_file = os.path.join(session_path, "trade_logs.jsonl")
-                if os.path.exists(log_file):
-                    with open(log_file, "r") as f:
-                        for line in f:
-                            try:
-                                records.append(json.loads(line))
-                            except json.JSONDecodeError:
-                                continue
-        else:
-            log_file = os.path.join(log_path, "trade_logs.jsonl")
-            if os.path.exists(log_file):
-                with open(log_file, "r") as f:
-                    for line in f:
-                        try:
-                            records.append(json.loads(line))
-                        except json.JSONDecodeError:
-                            continue
-    elif log_path.endswith(".jsonl") and os.path.exists(log_path):
-        with open(log_path, "r") as f:
-            for line in f:
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+# Common price aliases that may appear in raw files
+PRICE_ALIASES = ("price", "PRICE", "close", "CLOSE")
 
-    return pd.DataFrame(records)
+META_COLS = {
+    "timestamp", "symbol", "price",
+    "signal", "decision", "score", "score_smoothed",
+    "meta_confidence", "mode", "mode_used", "reason",
+    "top_indicators_str"
+}
 
 
-# === 2️⃣ Flatten one record into a row ===
-def flatten_record(row):
-    base = {
-        "timestamp": row.get("timestamp"),
-        "symbol": row.get("symbol"),
-        "price": row.get("price"),
-        "signal": row.get("signal"),
-        "decision": row.get("decision"),
-        "score": row.get("score"),
-        "meta_confidence": row.get("meta_confidence"),
-        "mode": row.get("mode_used"),
-        "reason": row.get("reason"),
-    }
-
-    # Category subscores
-    cat_scores = row.get("category_subscores", {})
-    if isinstance(cat_scores, dict):
-        for k, v in cat_scores.items():
-            base[f"cat_{k}"] = v
-
-    # Sub-scores
-    sub_scores = row.get("sub_scores", {})
-    if isinstance(sub_scores, dict):
-        for k, v in sub_scores.items():
-            base[f"sub_{k}"] = v
-
-    # Top indicators string
-    top_ind = row.get("top_indicators", [])
-    if isinstance(top_ind, list):
-        try:
-            base["top_indicators_str"] = ", ".join([f"{k} ({v:.2f})" for k, v in top_ind])
-        except:
-            base["top_indicators_str"] = str(top_ind)
+# -----------------------------
+# 1) Load & normalize sessions
+# -----------------------------
+def load_sessions(path: str = "logs") -> pd.DataFrame:
+    """
+    Robust loader:
+      - If `path` is a file: read that .jsonl
+      - If `path` is a directory: recursively read **/*.jsonl
+      - Accepts both trade_logs.jsonl (with 'indicators' dict) and raw_indicators.jsonl (top-level indicators)
+      - Ensures:
+          * 'price' is present if any PRICE_ALIASES exist
+          * 'mode_used' filled from 'mode' when missing
+          * 'indicators' is a dict (builds one if absent by collecting known feature keys)
+      - Keeps the full objects; downstream flattening happens in build_features()
+    """
+    # Discover files
+    if os.path.isfile(path) and path.endswith(".jsonl"):
+        files = [path]
+    elif os.path.isdir(path):
+        files = glob.glob(os.path.join(path, "**", "*.jsonl"), recursive=True)
     else:
-        base["top_indicators_str"] = str(top_ind)
+        print(f"[load_sessions] Path not found or unsupported: {path}")
+        return pd.DataFrame()
 
-    # Raw indicators
-    indicators = row.get("indicators", {})
-    if not isinstance(indicators, dict):
-        return None
+    if not files:
+        print(f"[load_sessions] No .jsonl files found under: {path}")
+        return pd.DataFrame()
 
-    for key, val in indicators.items():
-        # Standard numerical types
-        if isinstance(val, (int, float, np.integer, np.floating)):
-            base[key] = float(val)
-        elif isinstance(val, list) and len(val) == 1:
-            base[key] = val[0]
-        elif isinstance(val, str):
-            val_lower = val.lower().strip()
-            if val_lower == "true":
-                base[key] = 1
-            elif val_lower == "false":
-                base[key] = 0
-            else:
-                try:
-                    base[key] = float(val)
-                except:
-                    base[key] = np.nan
-        else:
+    rows: List[Dict[str, Any]] = []
+    bad = 0
+
+    for fp in files:
+        try:
+            with open(fp, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        bad += 1
+                        continue
+
+                    row = dict(obj)  # keep everything
+
+                    # Normalize/ensure price
+                    if "price" not in row or row.get("price") is None:
+                        for cand in PRICE_ALIASES:
+                            if cand in row and row[cand] is not None:
+                                row["price"] = row[cand]
+                                break
+
+                    # Normalize/ensure mode_used
+                    if "mode_used" not in row and "mode" in row:
+                        row["mode_used"] = row["mode"]
+
+                    # Ensure we have an indicators dict
+                    if not isinstance(row.get("indicators"), dict):
+                        inds = {}
+                        # collect only known features to avoid bloating
+                        for feat in FEATURE_SET:
+                            if feat in row:
+                                inds[feat] = row[feat]
+                        # sometimes PRICE is useful for derived features
+                        if "PRICE" in row and "PRICE" not in inds:
+                            inds["PRICE"] = row["PRICE"]
+                        if inds:
+                            row["indicators"] = inds
+
+                    rows.append(row)
+        except Exception as e:
+            print(f"[load_sessions] Error reading {fp}: {e}")
+
+    if bad:
+        print(f"[load_sessions] Skipped {bad} malformed lines.")
+
+    df = pd.DataFrame.from_records(rows)
+    # Drop rows with no timestamp at all
+    if "timestamp" in df.columns:
+        df = df.dropna(subset=["timestamp"])
+    return df
+
+
+# --------------------------------
+# 2) Flatten into feature rows
+# --------------------------------
+def _coerce_numeric(val):
+    if isinstance(val, (int, float, np.integer, np.floating)):
+        return float(val)
+    if isinstance(val, list) and len(val) == 1:
+        try:
+            return float(val[0])
+        except Exception:
+            return np.nan
+    if isinstance(val, str):
+        low = val.lower().strip()
+        if low == "true":
+            return 1.0
+        if low == "false":
+            return 0.0
+        try:
+            return float(val)
+        except Exception:
+            return np.nan
+    try:
+        return float(val)
+    except Exception:
+        return np.nan
+
+
+def build_features(df_raw: pd.DataFrame) -> pd.DataFrame:
+    """
+    Flattens each row into features:
+      - base meta columns (timestamp, symbol, price, signal, decision, score, meta_confidence, mode, reason)
+      - flattens category_subscores and sub_scores
+      - flattens indicators (from 'indicators' dict when present; otherwise from known FEATURE_SET at top-level)
+    """
+    records: List[Dict[str, Any]] = []
+
+    for _, row in df_raw.iterrows():
+        rec: Dict[str, Any] = {}
+
+        # Meta
+        rec["timestamp"]       = row.get("timestamp")
+        rec["symbol"]          = row.get("symbol")
+        rec["price"]           = row.get("price")
+        rec["signal"]          = row.get("signal")
+        rec["decision"]        = row.get("decision")
+        rec["score"]           = row.get("score")
+        rec["score_smoothed"]  = row.get("score_smoothed")
+        rec["meta_confidence"] = row.get("meta_confidence")
+        rec["mode"]            = row.get("mode_used") or row.get("mode")
+        rec["reason"]          = row.get("reason")
+
+        # Category subscores
+        cat_scores = row.get("category_subscores")
+        if isinstance(cat_scores, dict):
+            for k, v in cat_scores.items():
+                rec[f"cat_{k}"] = _coerce_numeric(v)
+
+        # Sub-scores
+        sub_scores = row.get("sub_scores")
+        if isinstance(sub_scores, dict):
+            for k, v in sub_scores.items():
+                rec[f"sub_{k}"] = _coerce_numeric(v)
+
+        # Top indicators (string form for debugging)
+        top_ind = row.get("top_indicators")
+        if isinstance(top_ind, list):
             try:
-                base[key] = float(val)
-            except:
-                base[key] = np.nan
+                rec["top_indicators_str"] = ", ".join([f"{k} ({float(v):.2f})" for k, v in top_ind])
+            except Exception:
+                rec["top_indicators_str"] = str(top_ind)
+        elif top_ind is not None:
+            rec["top_indicators_str"] = str(top_ind)
 
-    return base
+        # Indicators: prefer 'indicators' dict; else pick known feature keys from top-level
+        inds = row.get("indicators")
+        if isinstance(inds, dict) and inds:
+            for k, v in inds.items():
+                rec[k] = _coerce_numeric(v)
+        else:
+            for feat in FEATURE_SET:
+                if feat in df_raw.columns:
+                    rec[feat] = _coerce_numeric(row.get(feat))
 
+        records.append(rec)
 
-# === 3️⃣ Build full feature dataframe ===
-def build_features(df):
-    records = []
-    for _, row in df.iterrows():
-        record = flatten_record(row)
-        if record:
-            records.append(record)
+    features = pd.DataFrame.from_records(records)
 
-    features = pd.DataFrame(records)
+    # If price came through as object/str, coerce
+    if "price" in features.columns:
+        features["price"] = pd.to_numeric(features["price"], errors="coerce")
 
-    # Ensure all signal weight keys are present
+    # Ensure every SIGNAL_WEIGHTS key exists (so optimizer always sees the same columns)
     for col in parameters.SIGNAL_WEIGHTS.keys():
         if col not in features.columns:
             features[col] = np.nan
 
+    # Coerce non-meta columns to numeric
+    for col in features.columns:
+        if col not in META_COLS:
+            features[col] = pd.to_numeric(features[col], errors="coerce")
+
     return features
 
 
-# === 🧪 Manual test ===
+# --- Manual sanity test ---
 if __name__ == "__main__":
-    df = load_sessions()
-    features = build_features(df)
+    df_raw = load_sessions("logs")
+    print("rows:", len(df_raw))
+    print("columns:", list(df_raw.columns)[:20], "...")
+    # quick price non-null check
+    if "price" in df_raw.columns:
+        print("non-null price rows:", int(df_raw["price"].notna().sum()))
 
-    print(f"\n✅ Loaded {len(features)} usable records after flattening")
-    print(features.head())
-
-    features.to_csv("training_dataset_full.csv", index=False)
-    print("\n✅ Saved: training_dataset_full.csv")
+    df_feat = build_features(df_raw)
+    print("features rows:", len(df_feat))
+    print("feature columns (sample):", list(df_feat.columns)[:20], "...")
+    # save a quick snapshot
+    df_feat.to_csv("training_dataset_full.csv", index=False)
+    print("saved → training_dataset_full.csv")

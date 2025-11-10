@@ -33,7 +33,7 @@ def execute_trade(symbol, price, decision, score, atr, meta_confidence=None, siz
     trading_mode = exchange_config.TRADING_MODE
 
     if trading_mode == 'paper':
-        paper_engine.execute_paper_trade(symbol, price, decision, score)
+        paper_engine.execute_paper_trade(symbol, price, decision, score, size=size)
 
     elif trading_mode == 'live':
         exchange_adapter.submit_order(symbol, decision, size, price)
