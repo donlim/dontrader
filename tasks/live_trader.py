@@ -292,7 +292,7 @@ async def _loop_once():
         # smoothing buffer
         buf_roll = signal_smoothing_buffers[symbol]
         while len(buf_roll) >= smooth_n:
-            buf_roll.pop(0)
+            buf_roll.popleft()
         buf_roll.append(final_score)
 
         smoothed_score = compute_smoothed_score(buf_roll) or final_score
