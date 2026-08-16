@@ -1,11 +1,20 @@
 # trading_bot/logic/indicators.py
 
 import math
+import os
+from collections import defaultdict
+
 import numpy as np
 import pandas as pd
-from collections import defaultdict
 from scipy.stats import skew, kurtosis
+
 from trading_bot.config import parameters
+
+_INDICATOR_DEBUG = os.getenv("TB_DEBUG_INDICATORS", "").lower() in {"1", "true", "yes"}
+
+def _debug(msg):
+    if _INDICATOR_DEBUG:
+        print(msg)
 
 ema_store = defaultdict(dict)
 
@@ -347,7 +356,7 @@ def compute_book_slope(bids, asks, depth=5):
     depth = min(depth, len(bids), len(asks))
 
     if depth == 0:
-        print(f"[DEBUG] Skipping slope calc: bids={len(bids)}, asks={len(asks)}")
+        _debug(f"[DEBUG] Skipping slope calc: bids={len(bids)}, asks={len(asks)}")
         return None, None
 
     bid_px = np.array([px for px, sz in bids[:depth]])
@@ -843,7 +852,7 @@ def compute_ulcer_index(prices, window=100):
     squared_drawdown = percent_drawdown ** 2
     result = np.sqrt(np.mean(squared_drawdown))
 
-    print(f"[DEBUG] Ulcer Index result = {result}, type = {type(result)}")
+    _debug(f"[DEBUG] Ulcer Index result = {result}, type = {type(result)}")
 
     return result
 
@@ -883,7 +892,7 @@ def compute_all_indicators(prices, volumes, highs, lows, opens, closes, bids, as
     bids = pd.Series(bids)
     asks = pd.Series(asks)
     indicators_dict = {}
-    print(f"[DEBUG] prices len = {len(prices)}, SMA50 = {compute_sma(prices, 50)}")
+    _debug(f"[DEBUG] prices len = {len(prices)}, SMA50 = {compute_sma(prices, 50)}")
 
     # === Trend
     indicators_dict.update({
@@ -896,7 +905,7 @@ def compute_all_indicators(prices, volumes, highs, lows, opens, closes, bids, as
         "SMA50": compute_sma(prices, 50),
         "SMA200": compute_sma(prices, 200),
         "SMA": compute_sma(prices, 50),  # alias, optional
-        "SMA_DIFF": compute_sma(prices, 50) - compute_sma(prices, 200),
+        "SMA_DIFF": (compute_sma(prices, 50) or 0) - (compute_sma(prices, 200) or 0),
         "MACD": compute_macd(symbol),
         "ADX": compute_adx(highs, lows, prices, parameters.ADX_WINDOW),
         "PARABOLIC_SAR": float(compute_parabolic_sar(highs, lows, parameters.PARABOLIC_SAR_STEP, parameters.PARABOLIC_SAR_MAX_STEP).iloc[-1]) if not highs.empty and not lows.empty else None,
@@ -980,7 +989,7 @@ def compute_all_indicators(prices, volumes, highs, lows, opens, closes, bids, as
     # === Price Action / Patterns
     support, resistance = compute_support_resistance(prices, window=20, tolerance=0.001)
     val = compute_candle_body_ratio(opens, closes, highs, lows)
-    print(f"[DEBUG] CANDLE_BODY_RATIO = {val}")
+    _debug(f"[DEBUG] CANDLE_BODY_RATIO = {val}")
     indicators_dict.update({"CANDLE_BODY_RATIO": val})
     indicators_dict.update({
         "WICK_UP": compute_wick_percent(opens, closes, highs, lows)[0],
@@ -1030,5 +1039,5 @@ def compute_all_indicators(prices, volumes, highs, lows, opens, closes, bids, as
         "BID_VOL": bid_vol,
         "ASK_VOL": ask_vol,
     })
-    print("[DEBUG] indicators_dict keys right after BOLLINGER_components update:", indicators_dict.keys())
+    _debug(f"[DEBUG] indicators_dict keys right after BOLLINGER_components update: {list(indicators_dict.keys())}")
     return indicators_dict

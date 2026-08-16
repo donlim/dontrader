@@ -221,11 +221,14 @@ EXECUTION_LATENCY_MS = 200
 ORDER_BOOK_DECAY_MS = 1000
 
 # === Live Price Bootstrapping ===
+# NOTE: These are only fallback values used before first live price is received.
+# Actual prices are fetched from Hyperliquid WebSocket in real-time.
+# Set to 1.0 to ensure relative calculations work correctly as placeholders.
 
 SYMBOL_STARTING_PRICES = {
-    'BTC': 105000,
-    'ETH': 2500,
-    'HYPE': 40
+    'BTC': 1.0,  # Will be updated from Hyperliquid
+    'ETH': 1.0,  # Will be updated from Hyperliquid
+    'HYPE': 1.0  # Will be updated from Hyperliquid
 }
 
 FEATURE_WINDOW = 10

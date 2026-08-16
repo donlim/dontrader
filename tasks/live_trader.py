@@ -13,6 +13,7 @@ Lightweight paper live-trader that:
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import os
 import time
@@ -118,6 +119,7 @@ with open(os.path.join(SESSION_DIR, "parameters_snapshot.json"), "w") as f:
 
 LOG_FILE = os.path.join(SESSION_DIR, "trade_logs.jsonl")
 RAW_FILE = os.path.join(SESSION_DIR, "raw_indicators.jsonl")
+SUMMARY_FILE = os.path.join(SESSION_DIR, "session_summary.json")
 
 # price memory for PnL + risk mgr
 price_store: Dict[str, float] = {
@@ -126,17 +128,39 @@ price_store: Dict[str, float] = {
 
 # live knobs (will be refreshed each loop so drawdown/regime changes apply)
 _current_live: Dict[str, Any] = {}
+_session_stats = {
+    "equity": parameters.STARTING_BALANCE,
+    "equity_peak": parameters.STARTING_BALANCE,
+    "drawdown": 0.0,
+    "max_drawdown": 0.0,
+    "trades": 0,
+    "last_equity_ts": time.time(),
+}
+
+def _persist_session_summary():
+    try:
+        payload = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            **_session_stats,
+        }
+        with open(SUMMARY_FILE, "w") as f:
+            json.dump(payload, f, indent=2)
+    except Exception as exc:
+        print(f"[live_trader] failed to write session summary: {exc}")
+
+atexit.register(_persist_session_summary)
+_persist_session_summary()
 
 def _refresh_live_params() -> None:
     """
-    Pull a fresh set of live parameters. For now, regime='default' and session_drawdown=0.0.
-    Wire session_drawdown to your paper PnL later.
+    Pull a fresh set of live parameters.
     """
-    # TODO (Phase-1): compute session drawdown from paper_engine / risk manager
-    session_dd = 0.0
     regime = "default"
     global _current_live
-    _current_live = runtime_params(name_or_regime=regime, session_drawdown=session_dd)
+    _current_live = runtime_params(
+        name_or_regime=regime,
+        session_drawdown=_session_stats["drawdown"],
+    )
 
 # first load
 _refresh_live_params()
@@ -147,6 +171,22 @@ def _to_scalar(x):
     if isinstance(x, np.ndarray):
         return x[-1] if x.size else None
     return x
+
+def _update_session_state(pnl_snapshot: dict | None) -> None:
+    if not pnl_snapshot:
+        return
+    equity = pnl_snapshot.get("equity")
+    if equity is None:
+        return
+    stats = _session_stats
+    stats["equity"] = float(equity)
+    stats["equity_peak"] = max(stats["equity_peak"], stats["equity"])
+    peak = stats["equity_peak"]
+    drawdown = 0.0 if peak <= 0 else max(0.0, (peak - stats["equity"]) / peak)
+    stats["drawdown"] = drawdown
+    stats["max_drawdown"] = max(stats["max_drawdown"], drawdown)
+    stats["last_equity_ts"] = time.time()
+    _persist_session_summary()
 
 def _flatten(pack: dict) -> dict:
     flat = {}
@@ -314,6 +354,7 @@ async def _loop_once():
         )
         if decision != "HOLD":
             last_trade_ts[symbol] = time.time()
+            _session_stats["trades"] += 1
 
         # structured trade log entry
         log_entry = {
@@ -337,7 +378,8 @@ async def _loop_once():
         # update risk/PnL views
         risk_manager.update_live_prices(price_store)
         # your paper_engine accepts (price_store, positions) in some places; using positions=None is safe in current codebase
-        paper_engine.update_total_pnl(price_store, positions=None)
+        pnl_snapshot = paper_engine.update_total_pnl(price_store, positions=None)
+        _update_session_state(pnl_snapshot)
 
         # console peek
         print(

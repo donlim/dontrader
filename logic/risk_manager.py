@@ -1,7 +1,7 @@
-# trading_bot/logic/risk_manager_v4.py
+# trading_bot/logic/risk_manager.py
 
 """
-Phase 4 — Fully Synced Institutional Risk Manager (V4 Portfolio Optimizer Ready)
+Unified Risk Manager — Position tracking, sizing, and portfolio limits
 """
 
 import math
@@ -15,6 +15,40 @@ risk_state = {
     'starting_equity': parameters.STARTING_BALANCE,
     'live_prices': {symbol: parameters.SYMBOL_STARTING_PRICES.get(symbol, 1) for symbol in SYMBOLS}
 }
+
+# === Position State (from risk.py) ===
+positions = {}
+
+def initialize_positions(symbols):
+    """Initialize position tracking for given symbols."""
+    global positions
+    positions = {symbol: 0 for symbol in symbols}
+
+def evaluate_position(symbol, smoothed_score):
+    """
+    Evaluate whether to BUY/SELL/HOLD based on score and current position.
+    Uses thresholds from parameters.BOT_MODES.
+    """
+    mode = parameters.CURRENT_MODE
+    buy_threshold = parameters.BOT_MODES[mode]["buy_threshold"]
+    sell_threshold = parameters.BOT_MODES[mode]["sell_threshold"]
+
+    if smoothed_score > buy_threshold:
+        signal = 'BUY'
+    elif smoothed_score < sell_threshold:
+        signal = 'SELL'
+    else:
+        signal = 'HOLD'
+
+    current = positions.get(symbol, 0)
+    if signal == 'BUY' and current < 1:
+        positions[symbol] = positions.get(symbol, 0) + 1
+        return 'BUY'
+    elif signal == 'SELL' and current > -1:
+        positions[symbol] = positions.get(symbol, 0) - 1
+        return 'SELL'
+    else:
+        return 'HOLD'
 
 def initialize_risk_manager():
     risk_state['daily_loss'] = 0.0

@@ -51,13 +51,13 @@ def parse_args():
         "--gate_min_equity_ratio",
         type=float,
         default=1.00,
-        help="Require optimized_test / baseline_test ≥ this"
+        help="Require optimized_test / baseline_test >= this"
     )
     parser.add_argument(
         "--gate_max_drawdown",
         type=float,
         default=0.35,
-        help="Require max drawdown ≤ this (fraction, e.g., 0.35 = 35%)"
+        help="Require max drawdown <= this (fraction, e.g., 0.35 = 35 percent)"
     )
     parser.add_argument(
         "--opt_profile",

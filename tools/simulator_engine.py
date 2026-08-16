@@ -2,13 +2,14 @@
 
 import os
 import json
-from collections import namedtuple
-from typing import Dict, Iterable, Tuple, Optional
+from collections import namedtuple, defaultdict, deque
+from typing import Dict, Iterable, Tuple, Optional, List, Any
 
 import numpy as np
 import pandas as pd
 
 from trading_bot.config import parameters
+from trading_bot.config.parameters_live import runtime_params
 
 # ✅ Structured result type
 SimulationResult = namedtuple("SimulationResult", ["final", "equity_curve", "trade_pairs"])
@@ -77,10 +78,20 @@ class PortfolioSimulator:
         self.cash: float = parameters.STARTING_BALANCE
         self.positions: Dict[str, float] = {sym: 0.0 for sym in self.symbols}
 
-        mode_config = parameters.BOT_MODES.get(parameters.CURRENT_MODE, {})
-        self.buy_threshold = mode_config.get("buy_threshold", parameters.DEFAULT_BUY_THRESHOLD)
-        self.sell_threshold = mode_config.get("sell_threshold", parameters.DEFAULT_SELL_THRESHOLD)
+        self.profile = runtime_params(session_drawdown=0.0)
+        self.buy_threshold = self.profile["buy_thr"]
+        self.sell_threshold = self.profile["sell_thr"]
+        self.hysteresis = self.profile["hysteresis"]
+        self.cooldown_sec = self.profile["cooldown_sec"]
+        self.min_hold_sec = self.profile["min_hold_sec"]
+        self.max_trades_per_min = self.profile["max_trades_per_min"]
+        self.smooth_window = max(1, int(self.profile["smooth_window"]))
         self.fee_rate = parameters.FEE_RATE
+        self.slippage_rate = parameters.SLIPPAGE_BPS / 10000.0
+        self.impact_rate = parameters.IMPACT_BPS / 10000.0
+        self.max_position_size = parameters.MAX_POSITION_SIZE
+        self.max_position_notional = parameters.MAX_POSITION_NOTIONAL
+        self.daily_loss_limit = parameters.DAILY_LOSS_LIMIT_PCT
 
         # Tracking
         self.equity_curve = []  # list of dicts
@@ -88,6 +99,13 @@ class PortfolioSimulator:
         self.last_entry_time = {sym: None for sym in self.symbols}
         self.in_position = {sym: False for sym in self.symbols}
         self.last_price = {sym: None for sym in self.symbols}
+        self.last_action = defaultdict(lambda: "HOLD")
+        self.last_trade_ts = defaultdict(lambda: -float("inf"))
+        self.signal_buffers = defaultdict(list)
+        self.trade_rate_windows = defaultdict(lambda: deque(maxlen=128))
+        self.equity_peak = parameters.STARTING_BALANCE
+        self.drawdown = 0.0
+        self.halted = False
 
     def simulate(self, df: pd.DataFrame, weights: Dict[str, float]) -> SimulationResult:
         """
@@ -143,7 +161,8 @@ class PortfolioSimulator:
             if not np.isfinite(price) or price <= 0:
                 continue
 
-            timestamp = row[ts_col]
+            timestamp_raw = row[ts_col]
+            ts_seconds = self._to_timestamp(timestamp_raw)
             self.last_price[symbol] = price
 
             # Weighted signal score (robust to missing cols)
@@ -159,44 +178,63 @@ class PortfolioSimulator:
             desired_qty = desired_notional / price if price > 0 else 0.0
             fee = 0.0
 
-            # Decision
-            if score > self.buy_threshold:
-                decision = "BUY"
+            smoothed_score = self._smoothed_score(symbol, score)
+            decision = self._apply_hysteresis(symbol, smoothed_score)
+
+            if self.halted or self._rate_limited(symbol, ts_seconds) or self._min_hold_block(symbol, ts_seconds):
+                decision = "HOLD"
+
+            if decision == "BUY" and self.drawdown >= self.profile["dd_hard"]:
+                decision = "HOLD"
+
+            if decision == "BUY":
                 max_affordable_notional = max(0.0, self.cash / (1 + self.fee_rate))
                 affordable_qty = max_affordable_notional / price if price > 0 else 0.0
-                qty = min(desired_qty, affordable_qty)
+                cap_qty = max(0.0, self.max_position_size - self.positions.get(symbol, 0.0))
+                qty = min(desired_qty, affordable_qty, cap_qty)
+                qty = min(qty, self.max_position_notional / price if price > 0 else 0.0)
                 if qty > 0:
-                    fee = price * qty * self.fee_rate
-                    cost = price * qty + fee
-                    self.cash -= cost
-                    self.positions[symbol] += qty
+                    effective_price = self._apply_slippage(price, qty, "BUY")
+                    fee = effective_price * qty * self.fee_rate
+                    cost = effective_price * qty + fee
+                    if cost <= self.cash:
+                        self.cash -= cost
+                        self.positions[symbol] += qty
 
-                    if not self.in_position[symbol]:
-                        self.last_entry_time[symbol] = timestamp
-                        self.in_position[symbol] = True
+                        if not self.in_position[symbol]:
+                            self.last_entry_time[symbol] = timestamp_raw
+                            self.in_position[symbol] = True
+                        self.last_trade_ts[symbol] = ts_seconds
+                        self.trade_rate_windows[symbol].append(ts_seconds)
+                        self.last_action[symbol] = "BUY"
+                    else:
+                        decision = "HOLD"
                 else:
                     decision = "HOLD"
 
-            elif score < self.sell_threshold:
-                decision = "SELL"
+            elif decision == "SELL":
                 held = self.positions.get(symbol, 0.0)
                 qty = min(held, desired_qty if desired_qty > 0 else held)
                 if qty > 0:
-                    fee = price * qty * self.fee_rate
-                    proceeds = price * qty - fee
+                    effective_price = self._apply_slippage(price, qty, "SELL")
+                    fee = effective_price * qty * self.fee_rate
+                    proceeds = effective_price * qty - fee
                     self.cash += proceeds
                     self.positions[symbol] -= qty
 
                     if self.in_position[symbol] and self.positions[symbol] <= 0:
                         entry_time = self.last_entry_time[symbol]
                         if entry_time is not None:
-                            self.trade_pairs[symbol].append((entry_time, timestamp))
+                            self.trade_pairs[symbol].append((entry_time, timestamp_raw))
                         self.last_entry_time[symbol] = None
                         self.in_position[symbol] = False
+                    self.last_trade_ts[symbol] = ts_seconds
+                    self.trade_rate_windows[symbol].append(ts_seconds)
+                    self.last_action[symbol] = "SELL"
                 else:
                     decision = "HOLD"
             else:
-                decision = "HOLD"
+                self.last_action[symbol] = "HOLD"
 
             equity = self.cash
             for sym, qty in self.positions.items():
@@ -204,14 +242,21 @@ class PortfolioSimulator:
                 if last_px is None:
                     continue
                 equity += qty * last_px
+            self._update_drawdown(equity)
+
             self.equity_curve.append({
-                "timestamp": timestamp,
+                "timestamp": timestamp_raw,
                 "symbol": symbol,
                 "equity": float(equity),
                 "score": float(score),
+                "score_smoothed": float(smoothed_score),
                 "decision": decision,
                 "meta_confidence": float(row.get("meta_confidence", 0.0) or 0.0),
             })
+
+            self._refresh_profile()
+            if self._daily_loss_exceeded(equity):
+                self.halted = True
 
         # Final equity snapshot
         final: Dict[str, float] = {}
@@ -224,6 +269,87 @@ class PortfolioSimulator:
         final["cash"] = float(self.cash)
 
         return SimulationResult(final, pd.DataFrame(self.equity_curve), self.trade_pairs)
+
+    # --- helpers ---------------------------------------------------------
+
+    def _apply_slippage(self, price: float, qty: float, side: str) -> float:
+        slip = self.slippage_rate
+        impact = self.impact_rate * min(1.0, qty / max(1e-9, self.max_position_size))
+        adj = slip + impact
+        if side == "BUY":
+            return price * (1 + adj)
+        return price * max(0.0, 1 - adj)
+
+    def _refresh_profile(self):
+        self.profile = runtime_params(session_drawdown=self.drawdown)
+        self.buy_threshold = self.profile["buy_thr"]
+        self.sell_threshold = self.profile["sell_thr"]
+        self.hysteresis = self.profile["hysteresis"]
+        self.cooldown_sec = self.profile["cooldown_sec"]
+        self.min_hold_sec = self.profile["min_hold_sec"]
+        self.max_trades_per_min = self.profile["max_trades_per_min"]
+        self.smooth_window = max(1, int(self.profile["smooth_window"]))
+
+    def _smoothed_score(self, symbol: str, score: float) -> float:
+        buf = self.signal_buffers[symbol]
+        if len(buf) >= self.smooth_window:
+            buf.pop(0)
+        buf.append(score)
+        return sum(buf) / len(buf)
+
+    def _apply_hysteresis(self, symbol: str, smoothed_score: float) -> str:
+        prev = self.last_action[symbol]
+        buy_th = self.buy_threshold if prev != "BUY" else self.buy_threshold + self.hysteresis
+        sell_th = self.sell_threshold if prev != "SELL" else self.sell_threshold - self.hysteresis
+
+        if smoothed_score > buy_th:
+            return "BUY"
+        if smoothed_score < sell_th:
+            return "SELL"
+        return "HOLD"
+
+    def _rate_limited(self, symbol: str, ts: float) -> bool:
+        if not self.cooldown_sec and not self.max_trades_per_min:
+            return False
+        last_ts = self.last_trade_ts[symbol]
+        if self.cooldown_sec and ts - last_ts < self.cooldown_sec:
+            return True
+        if self.max_trades_per_min:
+            window = self.trade_rate_windows[symbol]
+            while window and ts - window[0] > 60.0:
+                window.popleft()
+            if len(window) >= self.max_trades_per_min:
+                return True
+        return False
+
+    def _min_hold_block(self, symbol: str, ts: float) -> bool:
+        if not self.min_hold_sec:
+            return False
+        last_ts = self.last_trade_ts[symbol]
+        return ts - last_ts < self.min_hold_sec
+
+    def _update_drawdown(self, equity: float) -> None:
+        self.equity_peak = max(self.equity_peak, equity)
+        if self.equity_peak <= 0:
+            self.drawdown = 0.0
+            return
+        self.drawdown = max(0.0, (self.equity_peak - equity) / self.equity_peak)
+
+    def _daily_loss_exceeded(self, equity: float) -> bool:
+        loss_pct = max(0.0, (parameters.STARTING_BALANCE - equity) / parameters.STARTING_BALANCE)
+        return loss_pct >= self.daily_loss_limit
+
+    @staticmethod
+    def _to_timestamp(value: Any) -> float:
+        if isinstance(value, pd.Timestamp):
+            return value.timestamp()
+        try:
+            return float(value)
+        except Exception:
+            try:
+                return pd.to_datetime(value).timestamp()
+            except Exception:
+                return 0.0
 
 
 # === Compatibility Wrappers ===

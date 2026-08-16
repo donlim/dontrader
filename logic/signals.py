@@ -58,160 +58,126 @@ from trading_bot.logic.indicators import (
 # =====================
 # Individual Scoring Functions
 # =====================
+# NOTE: All signal functions normalize raw indicator values to [-1, +1] range
+# using tanh() with appropriate scaling factors based on observed data ranges.
+# Price-relative calculations are used where applicable to be asset-agnostic.
+
 def to_scalar_safe(x):
     if isinstance(x, pd.Series):
         return x.iloc[-1]
     elif isinstance(x, np.ndarray):
         return x[-1]
     return x
-    
+
+# === Orderbook / Microstructure Signals ===
+
 def delta_flow_signal(delta_flow):
-    return np.tanh(delta_flow / 10.0) if delta_flow is not None else 0
+    # Delta flow is typically small (-0.1 to 0.1), scale up
+    return np.tanh(delta_flow * 50.0) if delta_flow is not None else 0
 
 def book_imbalance_signal(book_imb):
-    return np.tanh(book_imb * 3.0) if book_imb is not None else 0
+    # Book imbalance is -1 to 1, amplify slightly
+    return np.tanh(book_imb * 2.0) if book_imb is not None else 0
 
 def book_pressure_signal(bid_density, ask_density):
     if bid_density is None or ask_density in (None, 0): return 0
-    return np.tanh((bid_density / ask_density - 1.0) * 2.0)
+    ratio = bid_density / ask_density
+    return np.tanh((ratio - 1.0) * 2.0)
 
 def slope_signal(bid_slope, ask_slope):
     if bid_slope is None or ask_slope is None: return 0
-    return np.tanh((bid_slope - ask_slope) / 10.0)
+    return np.tanh((bid_slope - ask_slope) * 5.0)
 
 def liquidity_gap_signal(min_bid_gap, min_ask_gap):
     if min_bid_gap is None or min_ask_gap is None: return 0
-    return np.tanh((min_ask_gap - min_bid_gap) * 10.0)
+    return np.tanh((min_ask_gap - min_bid_gap) * 50.0)
 
 def spread_signal(spread):
-    return np.tanh(1.0 / spread) if spread and spread > 0 else 0
+    # Spread as percentage - lower is better (tighter spread)
+    if spread is None or spread <= 0: return 0
+    # Invert so tighter spread = higher signal
+    return np.tanh(0.001 / spread) if spread > 0 else 0
 
-def volatility_signal(stddev):
-    return -np.tanh(stddev / 5.0) if stddev and stddev > 0 else 0
+def full_book_imbalance_signal(value):
+    # Full book imbalance is -1 to 1
+    return np.tanh(value * 2.0) if value is not None else 0
 
-def adx_signal(adx):
-    if adx is None:
-        return 0
-    return 1.0 if adx > 25 else -1.0
+def book_density_signal(value):
+    # Book density typically 0-1000+, normalize
+    return np.tanh(value / 500.0) if value is not None else 0
 
-def cci_signal(cci):
-    return np.tanh(cci / 100.0) if cci is not None else 0
+def top_of_book_volatility_signal(value):
+    # Top of book vol is small, scale up
+    return np.tanh(value * 100.0) if value is not None else 0
 
-def roc_signal(roc):
-    return np.tanh(roc / 5.0) if roc is not None else 0
+def book_pressure_ratio_signal(value):
+    # Ratio centered at 1.0
+    return np.tanh((value - 1.0) * 2.0) if value is not None else 0
 
-def trend_strength_signal(ts):
-    return np.tanh(ts / 100.0) if ts is not None else 0
+def chaikin_oscillator_signal(value):
+    # Chaikin oscillator - use relative scaling
+    return np.tanh(value * 10.0) if value is not None else 0
 
-def tsi_signal(tsi):
-    return np.tanh(tsi / 50.0) if tsi is not None else 0
+def bid_gap_signal(value):
+    # Bid gap as fraction, scale up
+    return np.tanh(value * 100.0) if value is not None else 0
 
-def kvo_signal(kvo):
-    return np.tanh(kvo / 5000.0) if kvo is not None else 0
+def ask_gap_signal(value):
+    # Ask gap as fraction, scale up (negative = bearish)
+    return -np.tanh(value * 100.0) if value is not None else 0
 
-def rsi_signal(rsi):
-    return np.tanh((rsi - 50) / 10.0) if rsi is not None else 0
+def bid_vol_signal(value):
+    # Bid volume ratio
+    return np.tanh(value * 2.0) if value is not None else 0
 
-def macd_signal(macd):
-    return np.tanh(macd / 5.0) if macd is not None else 0
+def ask_vol_signal(value):
+    # Ask volume ratio
+    return np.tanh(value * 2.0) if value is not None else 0
 
-def ema_signal(ema_diff):
-    return np.tanh(ema_diff / 10.0) if ema_diff is not None else 0
+# === Volatility Signals ===
 
-def momentum_signal(momentum):
-    return np.tanh(momentum / 10.0) if momentum is not None else 0
+def volatility_signal(stddev, price=None):
+    # Volatility as percentage of price if price provided
+    if stddev is None or stddev <= 0: return 0
+    # Higher volatility = negative signal (risk)
+    return -np.tanh(stddev * 10.0)
 
-def vwap_signal(price, vwap):
-    if price is None or vwap is None: return 0
-    return np.tanh((price - vwap) / price * 5.0)
+def atr_signal_relative(atr, price):
+    # ATR as percentage of price - price relative!
+    if atr is None or price is None or price <= 0: return 0
+    atr_pct = (atr / price) * 100  # Convert to percentage
+    # ATR 0.5% = neutral, higher = more volatile
+    return np.tanh((atr_pct - 0.5) * 2.0)
 
-def obv_signal(obv):
-    return np.tanh(obv / 1000000.0) if obv is not None else 0
+def atr_signal(value):
+    # Fallback if no price - assume it's already normalized
+    if value is None: return 0
+    return np.tanh(value * 2.0)
 
-def accdist_signal(ad):
-    return np.tanh(ad / 1000000.0) if ad is not None else 0
+def keltner_signal(value):
+    # Keltner width as ratio
+    return np.tanh(value * 2.0) if value is not None else 0
 
-def donchian_signal(price, upper, lower):
-    if None in (price, upper, lower) or upper == lower: return 0
-    return np.tanh(((price - lower) / (upper - lower) - 0.5) * 5.0)
+def skew_signal(value):
+    # Skewness typically -3 to 3
+    return np.tanh(value / 2.0) if value is not None else 0
 
-def parabolic_sar_signal(sar, price):
-    if sar is None or price is None:
-        return 0
-    diff_ratio = (price - sar) / price
-    return np.tanh(diff_ratio * 50.0)  # amplifies subtle differences
-
-def sma_signal(value):
-    # Compare short vs long SMA if available, else use deviation
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def supertrend_signal(value):
-    # Use supertrend direction or distance from price
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def trix_signal(value):
-    # TRIX is a momentum oscillator of EMA triples
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def vortex_plus_signal(value):
-    # Vortex VI+ component
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def vortex_minus_signal(value):
-    # Vortex VI- component
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def dema_signal(value):
-    # Double EMA difference vs price
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def tema_signal(value):
-    # Triple EMA difference vs price
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def stoch_rsi_signal(value):
-    # Stochastic RSI normalized between 0–1
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def williams_r_signal(value):
-    # Williams %R, inverted and scaled from -100 to 0
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def fisher_signal(value):
-    # Fisher Transform typically normalized
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def cmo_signal(value):
-    # Chande Momentum Oscillator
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def heikin_ashi_ratio_signal(value):
-    # Ratio of HA candle body vs total candle range
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def zscore_price_signal(value):
-    # Z-score of price from mean
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def hilbert_dcp_signal(value):
-    # Placeholder: Hilbert Dominant Cycle Phase
-    return np.tanh(value / 100.0) if value is not None else 0
+def kurtosis_signal(value):
+    # Kurtosis typically -2 to 10+
+    return np.tanh(value / 5.0) if value is not None else 0
 
 def bollinger_signal(bollinger_dict, current_price):
     if bollinger_dict is None or current_price is None:
         return 0.0
-
     try:
         upper = float(bollinger_dict.get("upper"))
         lower = float(bollinger_dict.get("lower"))
         current_price = float(current_price)
-
         if upper == lower:
             return 0.0
-
+        # Position within bands: 0=lower, 1=upper, 0.5=middle
         normalized = (2 * (current_price - lower) / (upper - lower)) - 1
-        return float(np.tanh(normalized * 2.0))
-
+        return float(np.tanh(normalized * 1.5))
     except (TypeError, ValueError, ZeroDivisionError):
         return 0.0
 
@@ -219,91 +185,264 @@ def bollinger_pctb_signal(bollinger_pctb):
     if bollinger_pctb is None:
         return 0.0
     try:
-        normalized = float(bollinger_pctb) - 0.5  # center at mid band
-        return float(np.tanh(normalized * 4.0))  # scale to emphasize deviation
+        # %B: 0=lower band, 1=upper band, 0.5=middle
+        normalized = float(bollinger_pctb) - 0.5
+        return float(np.tanh(normalized * 3.0))
     except (TypeError, ValueError):
         return 0.0
 
-def atr_signal(value):
-    # Average True Range scaled
-    return np.tanh(value / 100.0) if value is not None else 0
+# === Trend Signals ===
 
-def keltner_signal(value):
-    # Keltner Channel width or distance from center
-    return np.tanh(value / 2.0) if value is not None else 0
+def adx_signal(adx):
+    # ADX 0-100, trend strength. Use smooth gradient, not binary.
+    if adx is None: return 0
+    # ADX > 25 = strong trend, < 20 = weak/no trend
+    # Map to [-1, 1]: 20->0, 40->0.76, 60->0.95
+    return np.tanh((adx - 25) / 15.0)
 
-def skew_signal(value):
-    # Skewness: positive = right tail
-    return np.tanh(value / 5.0) if value is not None else 0
+def trend_strength_signal(ts):
+    # Trend strength typically 0-100
+    if ts is None: return 0
+    return np.tanh((ts - 50) / 25.0)
 
-def kurtosis_signal(value):
-    # Kurtosis: tail heaviness
-    return np.tanh(value / 10.0) if value is not None else 0
+def ema_signal(ema_diff, price=None):
+    # EMA difference - should be price-relative
+    if ema_diff is None: return 0
+    if price and price > 0:
+        # Convert to percentage of price
+        pct_diff = (ema_diff / price) * 100
+        return np.tanh(pct_diff * 5.0)
+    # Fallback: assume small values
+    return np.tanh(ema_diff / 5.0)
 
-def mfi_signal(value):
-    # Money Flow Index
-    return np.tanh((value - 50) / 25.0) if value is not None else 0
+def sma_signal(value, price=None):
+    if value is None: return 0
+    if price and price > 0:
+        pct_diff = (value / price) * 100
+        return np.tanh(pct_diff * 5.0)
+    return np.tanh(value / 50.0)
 
-def eom_signal(value):
-    # Ease of Movement
-    return np.tanh(value / 1_000_000.0) if value is not None else 0
+def supertrend_signal(value, price=None):
+    if value is None: return 0
+    if price and price > 0:
+        pct_diff = (value / price) * 100
+        return np.tanh(pct_diff * 5.0)
+    return np.tanh(value / 50.0)
 
-def cmf_signal(value):
-    # Chaikin Money Flow
-    return np.tanh(value / 0.1) if value is not None else 0
+def trix_signal(value):
+    # TRIX is typically -0.5 to 0.5
+    return np.tanh(value * 5.0) if value is not None else 0
 
-def force_index_signal(value):
-    # Force Index = price change * volume
-    return np.tanh(value / 1_000_000.0) if value is not None else 0
-
-def rolling_vwap_signal(price, rolling_vwap):
-    if price is None or rolling_vwap is None: return 0
-    return np.tanh((price - rolling_vwap) / price * 5.0)
-
-def anchored_vwap_signal(price, anchored_vwap):
-    if price is None or anchored_vwap is None: return 0
-    return np.tanh((price - anchored_vwap) / price * 5.0)
-
-def volume_oscillator_signal(value):
-    # Volume Oscillator (fast - slow volume)
-    return np.tanh(value / 1_000_000.0) if value is not None else 0
-
-def adl_signal(value):
-    # Accumulation Distribution Line
-    return np.tanh(value / 1_000_000.0) if value is not None else 0
-
-def donchian_width_signal(value):
-    # Width between Donchian upper/lower bands
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def support_resistance_signal(support, resistance):
-    if support is None or resistance is None:
-        return 0
-    return np.tanh((resistance - support) / support)  # or divide by 100.0 for smoother scaling
-
-def full_book_imbalance_signal(value):
-    return np.tanh(value * 3.0) if value is not None else 0
-
-def chaikin_oscillator_signal(value):
-    return np.tanh(value / 1_000_000.0) if value is not None else 0
-
-def book_density_signal(value):
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def top_of_book_volatility_signal(value):
-    return np.tanh(value / 500.0) if value is not None else 0
-
-def book_pressure_ratio_signal(value):
+def vortex_plus_signal(value):
+    # Vortex VI+ typically 0.5 to 1.5, centered at 1
     return np.tanh((value - 1.0) * 3.0) if value is not None else 0
 
+def vortex_minus_signal(value):
+    # Vortex VI- typically 0.5 to 1.5, centered at 1 (invert for signal)
+    return -np.tanh((value - 1.0) * 3.0) if value is not None else 0
+
+def dema_signal(value, price=None):
+    if value is None: return 0
+    if price and price > 0:
+        pct_diff = (value / price) * 100
+        return np.tanh(pct_diff * 5.0)
+    return np.tanh(value / 50.0)
+
+def tema_signal(value, price=None):
+    if value is None: return 0
+    if price and price > 0:
+        pct_diff = (value / price) * 100
+        return np.tanh(pct_diff * 5.0)
+    return np.tanh(value / 50.0)
+
+def parabolic_sar_signal(sar, price):
+    if sar is None or price is None or price <= 0:
+        return 0
+    # Price above SAR = bullish, below = bearish
+    diff_ratio = (price - sar) / price
+    return np.tanh(diff_ratio * 100.0)
+
+# === Momentum Signals ===
+
+def rsi_signal(rsi):
+    # RSI 0-100, centered at 50
+    if rsi is None: return 0
+    return np.tanh((rsi - 50) / 15.0)
+
+def macd_signal(macd, price=None):
+    # MACD should be relative to price
+    if macd is None: return 0
+    if price and price > 0:
+        pct = (macd / price) * 1000  # Scale to meaningful range
+        return np.tanh(pct * 2.0)
+    return np.tanh(macd / 10.0)
+
+def momentum_signal(momentum):
+    # Momentum as price change
+    if momentum is None: return 0
+    return np.tanh(momentum / 5.0)
+
+def cci_signal(cci):
+    # CCI typically -200 to +200
+    return np.tanh(cci / 150.0) if cci is not None else 0
+
+def roc_signal(roc):
+    # ROC is percentage change, typically -5% to +5%
+    if roc is None: return 0
+    # ROC is already a percentage (0.01 = 1%)
+    return np.tanh(roc * 100.0)  # 1% change -> tanh(1) = 0.76
+
+def tsi_signal(tsi):
+    # TSI typically -50 to +50
+    return np.tanh(tsi / 30.0) if tsi is not None else 0
+
+def stoch_rsi_signal(value):
+    # Stochastic RSI 0-100
+    if value is None: return 0
+    return np.tanh((value - 50) / 25.0)
+
+def williams_r_signal(value):
+    # Williams %R is -100 to 0
+    if value is None: return 0
+    # -100 = oversold (bullish), 0 = overbought (bearish)
+    return np.tanh((value + 50) / 25.0)
+
+def fisher_signal(value):
+    # Fisher transform typically -2 to +2
+    return np.tanh(value / 1.5) if value is not None else 0
+
+def cmo_signal(value):
+    # Chande Momentum Oscillator -100 to +100
+    return np.tanh(value / 50.0) if value is not None else 0
+
+def heikin_ashi_ratio_signal(value):
+    # HA ratio 0 to 1
+    if value is None: return 0
+    return np.tanh((value - 0.5) * 3.0)
+
+def zscore_price_signal(value):
+    # Z-score typically -3 to +3
+    return np.tanh(value / 2.0) if value is not None else 0
+
+def hilbert_dcp_signal(value):
+    # Placeholder
+    return np.tanh(value / 2.0) if value is not None else 0
+
+# === Volume / Accumulation Signals ===
+
+def vwap_signal(price, vwap):
+    # Price relative to VWAP - percentage deviation
+    if price is None or vwap is None or vwap <= 0: return 0
+    pct_diff = (price - vwap) / vwap * 100
+    return np.tanh(pct_diff * 2.0)
+
+def obv_signal(obv, obv_prev=None):
+    # OBV trend - use rate of change instead of absolute
+    if obv is None: return 0
+    if obv_prev is not None and obv_prev != 0:
+        roc = (obv - obv_prev) / abs(obv_prev)
+        return np.tanh(roc * 10.0)
+    # Fallback: sign of OBV
+    return np.tanh(obv / (abs(obv) + 1e-10)) * 0.5
+
+def accdist_signal(ad, ad_prev=None):
+    # A/D Line trend
+    if ad is None: return 0
+    if ad_prev is not None and ad_prev != 0:
+        roc = (ad - ad_prev) / abs(ad_prev)
+        return np.tanh(roc * 10.0)
+    return np.tanh(ad / (abs(ad) + 1e-10)) * 0.5
+
+def mfi_signal(value):
+    # Money Flow Index 0-100
+    if value is None: return 0
+    return np.tanh((value - 50) / 25.0)
+
+def eom_signal(value):
+    # Ease of Movement - small values
+    return np.tanh(value * 100.0) if value is not None else 0
+
+def cmf_signal(value):
+    # Chaikin Money Flow -1 to +1
+    return np.tanh(value * 3.0) if value is not None else 0
+
+def force_index_signal(value, volume_avg=None):
+    # Force Index - normalize by typical volume
+    if value is None: return 0
+    if volume_avg and volume_avg > 0:
+        normalized = value / volume_avg
+        return np.tanh(normalized * 2.0)
+    return np.tanh(value * 0.001)  # Fallback
+
+def rolling_vwap_signal(price, rolling_vwap):
+    if price is None or rolling_vwap is None or rolling_vwap <= 0: return 0
+    pct_diff = (price - rolling_vwap) / rolling_vwap * 100
+    return np.tanh(pct_diff * 2.0)
+
+def anchored_vwap_signal(price, anchored_vwap):
+    if price is None or anchored_vwap is None or anchored_vwap <= 0: return 0
+    pct_diff = (price - anchored_vwap) / anchored_vwap * 100
+    return np.tanh(pct_diff * 2.0)
+
+def volume_oscillator_signal(value):
+    # Volume oscillator as percentage
+    return np.tanh(value / 50.0) if value is not None else 0
+
+def adl_signal(value, prev_value=None):
+    # ADL trend
+    if value is None: return 0
+    if prev_value is not None and prev_value != 0:
+        roc = (value - prev_value) / abs(prev_value)
+        return np.tanh(roc * 10.0)
+    return np.tanh(value / (abs(value) + 1e-10)) * 0.5
+
+def kvo_signal(kvo):
+    # Klinger Volume Oscillator
+    return np.tanh(kvo / 1000.0) if kvo is not None else 0
+
+# === Support / Resistance Signals ===
+
+def donchian_signal(price, upper, lower):
+    if None in (price, upper, lower) or upper == lower: return 0
+    # Position within channel: 0=lower, 1=upper
+    position = (price - lower) / (upper - lower)
+    return np.tanh((position - 0.5) * 3.0)
+
+def donchian_width_signal(value, price=None):
+    # Donchian width as percentage of price
+    if value is None: return 0
+    if price and price > 0:
+        pct = (value / price) * 100
+        return np.tanh(pct * 2.0)
+    return np.tanh(value * 0.01)
+
+def support_resistance_signal(support, resistance, price=None):
+    if support is None or resistance is None: return 0
+    if support == 0: return 0
+    # Price position relative to S/R
+    if price:
+        sr_range = resistance - support
+        if sr_range <= 0: return 0
+        position = (price - support) / sr_range
+        return np.tanh((position - 0.5) * 3.0)
+    # Fallback: S/R spread
+    spread_pct = (resistance - support) / support
+    return np.tanh(spread_pct * 10.0)
+
+# === Price Action / Candlestick Signals ===
+
 def candle_body_ratio_signal(value):
-    return np.tanh(value * 5.0) if value is not None else 0
+    # Body ratio 0 to 1
+    if value is None: return 0
+    return np.tanh((value - 0.5) * 3.0)
 
 def wick_up_signal(value):
-    return np.tanh(value * 5.0) if value is not None else 0
+    # Upper wick ratio 0 to 1
+    return np.tanh(value * 3.0) if value is not None else 0
 
 def wick_down_signal(value):
-    return np.tanh(value * 5.0) if value is not None else 0
+    # Lower wick ratio 0 to 1
+    return np.tanh(value * 3.0) if value is not None else 0
 
 def three_bar_reversal_signal(is_reversal):
     return 1.0 if is_reversal else 0.0
@@ -311,39 +450,50 @@ def three_bar_reversal_signal(is_reversal):
 def engulfing_candle_signal(is_engulfing):
     return 1.0 if is_engulfing else 0.0
 
+# === Risk / Return Signals ===
+
 def sharpe_signal(value):
+    # Sharpe ratio typically -2 to +4
     return np.tanh(value / 2.0) if value is not None else 0
 
 def max_drawdown_signal(value):
-    return -np.tanh(value / 0.1) if value is not None else 0  # penalize deeper drawdowns
+    # Drawdown as decimal (0.1 = 10%)
+    if value is None: return 0
+    # Larger drawdown = more negative signal
+    return -np.tanh(abs(value) * 10.0)
 
 def ulcer_index_signal(value):
-    return -np.tanh(value / 0.1) if value is not None else 0  # penalize higher ulcer index
+    # Ulcer index typically 0 to 0.2
+    if value is None: return 0
+    return -np.tanh(value * 20.0)
 
 def average_holding_time_signal(value):
-    return np.tanh(value / 60.0) if value is not None else 0  # longer avg hold = higher score
+    # Holding time in minutes
+    return np.tanh(value / 30.0) if value is not None else 0
 
-def fractal_upper_signal(value):
-    return np.tanh(value / 100.0) if value is not None else 0
+# === Fractal Signals ===
 
-def fractal_lower_signal(value):
-    return -np.tanh(value / 100.0) if value is not None else 0
+def fractal_upper_signal(value, price=None):
+    if value is None: return 0
+    if price and price > 0:
+        pct = (value / price) * 100
+        return np.tanh(pct * 2.0)
+    return np.tanh(value * 0.01)
 
-def bid_gap_signal(value):
-    return np.tanh(value * 10.0) if value is not None else 0
+def fractal_lower_signal(value, price=None):
+    if value is None: return 0
+    if price and price > 0:
+        pct = (value / price) * 100
+        return -np.tanh(pct * 2.0)
+    return -np.tanh(value * 0.01)
 
-def ask_gap_signal(value):
-    return -np.tanh(value * 10.0) if value is not None else 0
-
-def bid_vol_signal(value):
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def ask_vol_signal(value):
-    return np.tanh(value / 100.0) if value is not None else 0
-
-def ad_signal(value):
-    # Accumulation/Distribution index
-    return np.tanh(value / 1_000_000.0) if value is not None else 0
+def ad_signal(value, prev_value=None):
+    # Accumulation/Distribution - same as adl_signal
+    if value is None: return 0
+    if prev_value is not None and prev_value != 0:
+        roc = (value - prev_value) / abs(prev_value)
+        return np.tanh(roc * 10.0)
+    return np.tanh(value / (abs(value) + 1e-10)) * 0.5
 
 # =====================
 # Master Aggregation Logic
@@ -380,7 +530,10 @@ def generate_signal(indicators: dict, weights: dict | None = None):
     # 1) weights: prefer passed-in, else fallback to static defaults
     weights = _safe_weights(weights if weights is not None else parameters.SIGNAL_WEIGHTS)
 
-    # 2) Raw scores (keep your calls as-is; just wrap with _num later)
+    # Get current price for price-relative calculations
+    price = indicators.get("PRICE")
+
+    # 2) Raw scores with price-relative normalization where applicable
     raw_scores = {
         # --- Orderbook / Microstructure ---
         "DELTA_FLOW":       delta_flow_signal(indicators.get("DELTA_FLOW")),
@@ -401,40 +554,40 @@ def generate_signal(indicators: dict, weights: dict | None = None):
         "ASK_DENSITY":      book_density_signal(indicators.get("ASK_DENSITY")),
         "BID_DENSITY":      book_density_signal(indicators.get("BID_DENSITY")),
 
-        # --- Volatility ---
-        "VOLATILITY":           volatility_signal(indicators.get("STDDEV")),
-        "BOLLINGER_components": bollinger_signal(indicators.get("BOLLINGER_components"), indicators.get("PRICE")),
+        # --- Volatility (price-relative where applicable) ---
+        "VOLATILITY":           volatility_signal(indicators.get("STDDEV"), price),
+        "BOLLINGER_components": bollinger_signal(indicators.get("BOLLINGER_components"), price),
         "BOLLINGER":            bollinger_pctb_signal(indicators.get("BOLLINGER")),
-        "ATR":                  atr_signal(indicators.get("ATR")),
+        "ATR":                  atr_signal_relative(indicators.get("ATR"), price),
         "KELTNER_CHANNELS":     keltner_signal(indicators.get("KC_WIDTH")),
-        "FRACTAL_UPPER":        fractal_upper_signal(indicators.get("FRACTAL_UPPER")),
-        "FRACTAL_LOWER":        fractal_lower_signal(indicators.get("FRACTAL_LOWER")),
+        "FRACTAL_UPPER":        fractal_upper_signal(indicators.get("FRACTAL_UPPER"), price),
+        "FRACTAL_LOWER":        fractal_lower_signal(indicators.get("FRACTAL_LOWER"), price),
         "SKEW":                 skew_signal(indicators.get("SKEW")),
         "KURTOSIS":             kurtosis_signal(indicators.get("KURTOSIS")),
 
-        # --- Trend ---
+        # --- Trend (price-relative where applicable) ---
         "ADX":              adx_signal(indicators.get("ADX")),
         "TREND_STRENGTH":   trend_strength_signal(indicators.get("TREND_STRENGTH")),
-        "EMA_DIFF":         ema_signal(indicators.get("EMA_DIFF")),
-        "SMA50":            sma_signal(indicators.get("SMA50")),
-        "SMA200":           sma_signal(indicators.get("SMA200")),
-        "SMA_DIFF":         sma_signal(indicators.get("SMA_DIFF")),
-        "SUPERTREND":       supertrend_signal(indicators.get("SUPERTREND")),
+        "EMA_DIFF":         ema_signal(indicators.get("EMA_DIFF"), price),
+        "SMA50":            sma_signal(indicators.get("SMA50"), price),
+        "SMA200":           sma_signal(indicators.get("SMA200"), price),
+        "SMA_DIFF":         sma_signal(indicators.get("SMA_DIFF"), price),
+        "SUPERTREND":       supertrend_signal(indicators.get("SUPERTREND"), price),
         "TRIX":             trix_signal(indicators.get("TRIX")),
         "VI_PLUS":          vortex_plus_signal(indicators.get("VI_PLUS")),
         "VI_MINUS":         vortex_minus_signal(indicators.get("VI_MINUS")),
-        "DEMA":             dema_signal(indicators.get("DEMA_DIFF")),
-        "TEMA":             tema_signal(indicators.get("TEMA_DIFF")),
-        "EMA10":            ema_signal(indicators.get("EMA10")),
-        "EMA50":            ema_signal(indicators.get("EMA50")),
-        "EMA100":           ema_signal(indicators.get("EMA100")),
-        "EMA200":           ema_signal(indicators.get("EMA200")),
-        "SMA":              sma_signal(indicators.get("SMA")),
+        "DEMA":             dema_signal(indicators.get("DEMA_DIFF"), price),
+        "TEMA":             tema_signal(indicators.get("TEMA_DIFF"), price),
+        "EMA10":            ema_signal(indicators.get("EMA10"), price),
+        "EMA50":            ema_signal(indicators.get("EMA50"), price),
+        "EMA100":           ema_signal(indicators.get("EMA100"), price),
+        "EMA200":           ema_signal(indicators.get("EMA200"), price),
+        "SMA":              sma_signal(indicators.get("SMA"), price),
         "AD":               ad_signal(indicators.get("AD")),
 
         # --- Momentum ---
         "RSI":          rsi_signal(indicators.get("RSI")),
-        "MACD":         macd_signal(indicators.get("MACD")),
+        "MACD":         macd_signal(indicators.get("MACD"), price),
         "MOMENTUM":     momentum_signal(indicators.get("MOMENTUM")),
         "CCI":          cci_signal(indicators.get("CCI")),
         "ROC":          roc_signal(indicators.get("ROC")),
@@ -448,25 +601,26 @@ def generate_signal(indicators: dict, weights: dict | None = None):
         "HILBERT_CYCLE": hilbert_dcp_signal(indicators.get("HILBERT_CYCLE")),
 
         # --- Volume / Accumulation ---
-        "VWAP":          vwap_signal(indicators.get("PRICE"), indicators.get("VWAP")),
+        "VWAP":          vwap_signal(price, indicators.get("VWAP")),
         "OBV":           obv_signal(indicators.get("OBV")),
         "ACC_DIST":      accdist_signal(indicators.get("AD")),
         "MFI":           mfi_signal(indicators.get("MFI")),
         "EOM":           eom_signal(indicators.get("EOM")),
         "CMF":           cmf_signal(indicators.get("CMF")),
         "FORCE_INDEX":   force_index_signal(indicators.get("FORCE_INDEX")),
-        "ROLLING_VWAP":  rolling_vwap_signal(indicators.get("PRICE"), indicators.get("ROLLING_VWAP")),
-        "ANCHOR_VWAP":   anchored_vwap_signal(indicators.get("PRICE"), indicators.get("ANCHOR_VWAP")),
+        "ROLLING_VWAP":  rolling_vwap_signal(price, indicators.get("ROLLING_VWAP")),
+        "ANCHOR_VWAP":   anchored_vwap_signal(price, indicators.get("ANCHOR_VWAP")),
         "VOLUME_OSC":    volume_oscillator_signal(indicators.get("VOLUME_OSC")),
         "ADL":           adl_signal(indicators.get("ADL")),
+        "KVO":           kvo_signal(indicators.get("KVO")),
 
-        # --- Support / Resistance ---
-        "DONCHIAN":       donchian_signal(indicators.get("PRICE"),
+        # --- Support / Resistance (price-relative) ---
+        "DONCHIAN":       donchian_signal(price,
                                           indicators.get("DONCHIAN_UPPER"),
                                           indicators.get("DONCHIAN_LOWER")),
-        "DONCHIAN_WIDTH": donchian_width_signal(indicators.get("DONCHIAN_WIDTH")),
+        "DONCHIAN_WIDTH": donchian_width_signal(indicators.get("DONCHIAN_WIDTH"), price),
         "SUPPORT_RESISTANCE": support_resistance_signal(indicators.get("SUPPORT_LEVEL"),
-                                                        indicators.get("RESISTANCE_LEVEL")),
+                                                        indicators.get("RESISTANCE_LEVEL"), price),
 
         # --- Price Action ---
         "CANDLE_BODY_RATIO": candle_body_ratio_signal(indicators.get("CANDLE_BODY_RATIO")),
@@ -481,8 +635,7 @@ def generate_signal(indicators: dict, weights: dict | None = None):
         "ULCER_INDEX":  ulcer_index_signal(indicators.get("ULCER_INDEX")),
 
         # --- Other ---
-        "PARABOLIC_SAR": parabolic_sar_signal(indicators.get("PARABOLIC_SAR"),
-                                              indicators.get("PRICE")),
+        "PARABOLIC_SAR": parabolic_sar_signal(indicators.get("PARABOLIC_SAR"), price),
     }
 
     # 3) Normalize scores with tanh after coercion to float

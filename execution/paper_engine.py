@@ -13,7 +13,7 @@ import time
 
 from trading_bot.config import parameters
 from trading_bot.logic.signals import generate_signal
-from trading_bot.logic.risk import evaluate_position
+
 # === Paper Trading State ===
 paper_account = {
     'balance': parameters.STARTING_BALANCE,
@@ -81,6 +81,9 @@ def log_trade(symbol, price, size, side, fee):
     print(f"Balance: {paper_account['balance']:.2f} | Positions: {paper_account['positions']}")
 
 def simulate_portfolio_with_execution(df, weights):
+    # Lazy import to avoid circular dependency
+    from trading_bot.logic.risk_manager import evaluate_position
+
     initialize_paper_account()
 
     for _, row in df.iterrows():
